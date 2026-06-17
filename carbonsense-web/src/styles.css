@@ -1,0 +1,200 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* CarbonSense — Premium dark climate UI
+ * Rich greens, teals, warm amber accents, glassmorphism, soft gradients.
+ * All colors in oklch.
+ */
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-glow: var(--primary-glow);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-warm: var(--warm);
+  --color-warm-foreground: var(--warm-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+}
+
+/* Default = dark mode for CarbonSense */
+:root {
+  --radius: 1rem;
+
+  --background: oklch(0.18 0.03 180);
+  --foreground: oklch(0.97 0.01 150);
+
+  --card: oklch(0.23 0.035 175 / 0.6);
+  --card-foreground: oklch(0.97 0.01 150);
+
+  --popover: oklch(0.22 0.035 180);
+  --popover-foreground: oklch(0.97 0.01 150);
+
+  --primary: oklch(0.78 0.16 155);
+  --primary-foreground: oklch(0.16 0.04 175);
+  --primary-glow: oklch(0.86 0.18 160);
+
+  --secondary: oklch(0.28 0.04 185);
+  --secondary-foreground: oklch(0.97 0.01 150);
+
+  --muted: oklch(0.26 0.025 185);
+  --muted-foreground: oklch(0.72 0.02 170);
+
+  --accent: oklch(0.68 0.14 195);
+  --accent-foreground: oklch(0.16 0.04 175);
+
+  --warm: oklch(0.82 0.14 70);
+  --warm-foreground: oklch(0.2 0.05 60);
+
+  --destructive: oklch(0.65 0.22 25);
+  --destructive-foreground: oklch(0.98 0 0);
+
+  --border: oklch(1 0 0 / 0.08);
+  --input: oklch(1 0 0 / 0.1);
+  --ring: oklch(0.78 0.16 155);
+
+  --chart-1: oklch(0.78 0.16 155);
+  --chart-2: oklch(0.68 0.14 195);
+  --chart-3: oklch(0.82 0.14 70);
+  --chart-4: oklch(0.6 0.18 240);
+  --chart-5: oklch(0.75 0.2 320);
+
+  /* Brand gradients & glows */
+  --gradient-aurora: radial-gradient(
+      at 20% 10%,
+      oklch(0.4 0.14 165 / 0.55) 0,
+      transparent 55%
+    ),
+    radial-gradient(at 80% 0%, oklch(0.45 0.13 200 / 0.45) 0, transparent 50%),
+    radial-gradient(at 70% 90%, oklch(0.5 0.16 145 / 0.4) 0, transparent 55%),
+    linear-gradient(180deg, oklch(0.16 0.03 185) 0%, oklch(0.13 0.025 200) 100%);
+  --gradient-primary: linear-gradient(
+    135deg,
+    oklch(0.78 0.16 155),
+    oklch(0.68 0.14 195)
+  );
+  --gradient-warm: linear-gradient(
+    135deg,
+    oklch(0.82 0.14 70),
+    oklch(0.75 0.18 35)
+  );
+
+  --shadow-glow: 0 0 40px -8px oklch(0.78 0.16 155 / 0.45);
+  --shadow-soft: 0 20px 50px -20px oklch(0.1 0.03 180 / 0.6);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html,
+  body {
+    background: var(--background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    background-image: var(--gradient-aurora);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+}
+
+@utility glass {
+  background: oklch(1 0 0 / 0.04);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid oklch(1 0 0 / 0.08);
+  box-shadow: var(--shadow-soft);
+}
+
+@utility glass-strong {
+  background: oklch(0.22 0.035 180 / 0.55);
+  backdrop-filter: blur(28px) saturate(160%);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  border: 1px solid oklch(1 0 0 / 0.1);
+  box-shadow: var(--shadow-soft);
+}
+
+@utility gradient-primary {
+  background-image: var(--gradient-primary);
+}
+
+@utility gradient-warm {
+  background-image: var(--gradient-warm);
+}
+
+@utility text-gradient {
+  background-image: var(--gradient-primary);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@utility shadow-glow {
+  box-shadow: var(--shadow-glow);
+}
+
+@keyframes aurora-drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(-3%, 2%, 0) scale(1.05);
+  }
+}
+
+@keyframes float-soft {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+@utility animate-aurora {
+  animation: aurora-drift 18s ease-in-out infinite;
+}
+
+@utility animate-float {
+  animation: float-soft 4s ease-in-out infinite;
+}

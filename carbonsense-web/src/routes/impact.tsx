@@ -1,0 +1,1184 @@
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  AnimatePresence,
+  motion,
+  useMotionValue,
+  useTransform,
+  animate,
+} from "framer-motion";
+import {
+  ArrowLeft,
+  Award,
+  Calendar,
+  CheckCircle2,
+  Flame,
+  HelpCircle,
+  Leaf,
+  Loader2,
+  Lock,
+  Share2,
+  Sparkles,
+  Star,
+  Trophy,
+  X,
+} from "lucide-react";
+import toast from "react-hot-toast";
+import {
+  useAchievements,
+  useImpact,
+  useImpactEquivalencies,
+  useLevel,
+} from "@/hooks/useApi";
+import { useUnits } from "@/contexts/UnitsContext";
+import { useAuthStore } from "@/stores/authStore";
+import { formatCO2 } from "@/utils/units";
+
+export const Route = createFileRoute("/impact")({
+  ssr: false,
+  head: () => ({
+    meta: [
+      { title: "Your Impact — CarbonSense" },
+      {
+        name: "description",
+        content:
+          "See the tangible difference your habits make: a virtual forest, real-world equivalencies, and your achievements.",
+      },
+    ],
+  }),
+  component: ImpactPage,
+});
+
+// ---------- types ----------
+interface ImpactTotal {
+  carbon_saved_kg: number;
+  challenges_completed: number;
+  best_streak: number;
+  days_active: number;
+  xp: number;
+  achievements_earned: number;
+  total_achievements: number;
+  first_activity_at: string;
+}
+
+interface Equivalency {
+  id: string;
+  emoji: string;
+  value: number;
+  unit: string;
+  description: string;
+}
+
+interface EquivalenciesResp {
+  carbon_saved_kg: number;
+  items: Equivalency[];
+}
+
+interface LevelDef {
+  level: number;
+  name: string;
+  xp_required: number;
+  icon: string;
+}
+
+interface LevelResp {
+  xp: number;
+  current: LevelDef;
+  next?: LevelDef;
+  xp_into_current: number;
+  xp_to_next: number;
+  levels: LevelDef[];
+}
+
+interface Achievement {
+  id: string;
+  name: string;
+  description: string;
+  emoji: string;
+  earned: boolean;
+  earned_at?: string;
+  progress?: { current: number; target: number; unit: string };
+}
+
+interface AchievementsResp {
+  earned: number;
+  total: number;
+  achievements: Achievement[];
+}
+
+const equivalencyConfig: Record<string, { title: string; icon: string; unit: string }> = {
+  trees_year: { title: "Trees Planted", icon: "🌳", unit: "tree" },
+  miles_not_driven: { title: "Miles Not Driven", icon: "🚗", unit: "mile" },
+  smartphones: { title: "Phones Charged", icon: "📱", unit: "charge" },
+  smartphones_charged: { title: "Phones Charged", icon: "📱", unit: "charge" },
+  flights_saved: { title: "Flights Saved", icon: "✈️", unit: "flight" },
+  showers: { title: "Showers Saved", icon: "🚿", unit: "minute" },
+  showers_skipped: { title: "Shower Minutes", icon: "🚿", unit: "minute" },
+};
+
+const equivalencyFacts: Record<string, string> = {
+  trees_year: "Each tree absorbs about 22 kg CO2 per year.",
+  miles_not_driven: "Average cars emit about 0.4 kg CO2 per mile.",
+  smartphones: "Each full phone charge uses about 0.01 kg CO2.",
+  smartphones_charged: "Each full phone charge uses about 0.01 kg CO2.",
+  flights_saved: "A NYC to LA flight emits about 900 kg CO2.",
+  showers: "A 10-minute hot shower creates about 1.5 kg CO2.",
+  showers_skipped: "A 10-minute hot shower creates about 1.5 kg CO2.",
+};
+
+const FALLBACK_ACHIEVEMENTS: Achievement[] = [
+  { id: "first-step", name: "First Step", description: "Complete your first challenge", emoji: "🏁", earned: false },
+  { id: "week-warrior", name: "Week Warrior", description: "Keep a 7-day streak", emoji: "🔥", earned: false },
+  { id: "challenge-starter", name: "Challenge Starter", description: "Complete 5 challenges", emoji: "✅", earned: false },
+  { id: "first-kilo", name: "First Kilo", description: "Save your first kg of CO2", emoji: "🌱", earned: false },
+  { id: "tree-saver", name: "Tree Saver", description: "Save a tree-year of CO2", emoji: "🌳", earned: false },
+  { id: "bank-connected", name: "Bank Connected", description: "Connect your first bank", emoji: "🏦", earned: false },
+];
+
+// ---------- page ----------
+function ImpactPage() {
+  const user = useAuthStore((s) => s.user);
+  const firstName = useMemo(() => {
+    const n = user?.full_name?.trim() || user?.email?.split("@")[0] || "Friend";
+    return n.split(" ")[0].replace(/^./, (c) => c.toUpperCase());
+  }, [user]);
+
+  const [total, setTotal] = useState<ImpactTotal | null>(null);
+  const [equiv, setEquiv] = useState<EquivalenciesResp | null>(null);
+  const [level, setLevel] = useState<LevelResp | null>(null);
+  const [achv, setAchv] = useState<AchievementsResp | null>(null);
+  const [openAchievement, setOpenAchievement] = useState<Achievement | null>(null);
+  const totalQuery = useImpact();
+  const equivQuery = useImpactEquivalencies();
+  const levelQuery = useLevel();
+  const achievementsQuery = useAchievements();
+
+  useEffect(() => {
+    if (totalQuery.data) setTotal(totalQuery.data as ImpactTotal);
+  }, [totalQuery.data]);
+
+  useEffect(() => {
+    if (equivQuery.data) setEquiv(equivQuery.data as EquivalenciesResp);
+  }, [equivQuery.data]);
+
+  useEffect(() => {
+    if (levelQuery.data) setLevel(levelQuery.data as LevelResp);
+  }, [levelQuery.data]);
+
+  useEffect(() => {
+    if (achievementsQuery.data) setAchv(achievementsQuery.data as AchievementsResp);
+  }, [achievementsQuery.data]);
+
+  useEffect(() => {
+    if (
+      totalQuery.isError ||
+      equivQuery.isError ||
+      levelQuery.isError ||
+      achievementsQuery.isError
+    ) {
+      toast.error("Couldn't load your impact.");
+    }
+  }, [totalQuery.isError, equivQuery.isError, levelQuery.isError, achievementsQuery.isError]);
+
+  const loading =
+    totalQuery.isLoading ||
+    equivQuery.isLoading ||
+    levelQuery.isLoading ||
+    achievementsQuery.isLoading;
+
+  return (
+    <main className="relative min-h-screen overflow-x-hidden bg-background text-foreground">
+      <Ambient />
+      <Header />
+
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+        className="relative z-10 mx-auto w-full max-w-2xl px-5 pb-32 pt-4 sm:px-8"
+      >
+        {loading || !total || !equiv || !level || !achv ? (
+          <ImpactSkeleton />
+        ) : (
+          <>
+            <ForestHero carbonSavedKg={total.carbon_saved_kg} />
+            <LifetimeStats total={total} level={level} achievements={achv} />
+            <Equivalencies items={equiv.items} />
+            <LevelProgress level={level} />
+            <AchievementsGallery
+              data={achv}
+              onOpen={(a) => setOpenAchievement(a)}
+            />
+            <ShareCard
+              name={firstName}
+              kg={total.carbon_saved_kg}
+              streak={total.best_streak}
+              trees={Math.max(1, Math.round(total.carbon_saved_kg / 22))}
+              levelName={level.current.name}
+            />
+          </>
+        )}
+      </motion.div>
+
+      <AnimatePresence>
+        {openAchievement && (
+          <AchievementSheet
+            achievement={openAchievement}
+            onClose={() => setOpenAchievement(null)}
+          />
+        )}
+      </AnimatePresence>
+    </main>
+  );
+}
+
+// ---------- ambient + header ----------
+function Ambient() {
+  return (
+    <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+      <div className="absolute -left-32 top-0 h-[420px] w-[420px] rounded-full bg-emerald-400/15 blur-[120px]" />
+      <div className="absolute -right-32 top-40 h-[360px] w-[360px] rounded-full bg-teal-400/10 blur-[120px]" />
+      <div className="absolute bottom-0 left-1/3 h-[280px] w-[280px] rounded-full bg-sky-400/10 blur-[120px]" />
+    </div>
+  );
+}
+
+function Header() {
+  return (
+    <header className="sticky top-0 z-30 border-b border-white/5 bg-background/70 backdrop-blur-xl">
+      <div className="mx-auto flex h-14 w-full max-w-2xl items-center justify-between px-5 sm:px-8">
+        <Link
+          to="/home"
+          className="grid h-9 w-9 place-items-center rounded-full border border-white/10 bg-white/5 transition hover:bg-white/10"
+          aria-label="Back"
+        >
+          <ArrowLeft className="h-4 w-4" />
+        </Link>
+        <h1 className="text-sm font-semibold tracking-tight">Your Impact</h1>
+        <span className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 text-emerald-950">
+          <Sparkles className="h-4 w-4" />
+        </span>
+      </div>
+    </header>
+  );
+}
+
+// ---------- 1. forest hero ----------
+function ForestHero({ carbonSavedKg }: { carbonSavedKg: number }) {
+  const treeCount = Math.max(1, Math.floor(carbonSavedKg / 22));
+  const treeText = pluralize(treeCount, "tree", "trees");
+
+  // tier: seedling | small | forest | lush
+  const tier: "seedling" | "small" | "forest" | "lush" =
+    carbonSavedKg < 22
+      ? "seedling"
+      : carbonSavedKg < 110
+        ? "small"
+        : carbonSavedKg < 500
+          ? "forest"
+          : "lush";
+
+  // distribute up to ~24 visible trees across the scene, even if treeCount is huge.
+  const visible = Math.min(treeCount, tier === "seedling" ? 1 : tier === "small" ? 5 : tier === "forest" ? 14 : 24);
+  const trees = useMemo(() => {
+    const items = [] as Array<{ id: number; x: number; y: number; size: number; delay: number; hue: number }>;
+    for (let i = 0; i < visible; i++) {
+      // spread across the ground band; deterministic enough to feel composed.
+      const ratio = (i + 0.5) / Math.max(visible, 1);
+      const jitterX = (Math.sin(i * 12.9898) * 43758.5453) % 1; // pseudo
+      const jitterY = (Math.cos(i * 78.233) * 12345.6789) % 1;
+      const xJ = (jitterX - Math.floor(jitterX) - 0.5) * 8;
+      const yJ = (jitterY - Math.floor(jitterY) - 0.5) * 8;
+      items.push({
+        id: i,
+        x: 6 + ratio * 88 + xJ,
+        y: 58 + (i % 3) * 9 + yJ,
+        size: tier === "seedling" ? 58 : tier === "lush" ? 28 + (i % 5) * 6 : tier === "forest" ? 30 + (i % 4) * 7 : 36 + (i % 3) * 8,
+        delay: i * 0.05,
+        hue: 140 + (i % 7) * 5,
+      });
+    }
+    return items;
+  }, [visible, tier]);
+
+  return (
+    <section
+      aria-label="Your CarbonSense forest"
+      className="forest-hero relative mt-2 overflow-hidden rounded-3xl border border-emerald-200/15 bg-gradient-to-b from-sky-500/15 via-emerald-500/10 to-emerald-700/20"
+    >
+      <div className="relative h-[250px] w-full">
+        <div
+          aria-hidden
+          className="absolute inset-0 opacity-80"
+          style={{
+            background:
+              "radial-gradient(circle at 18% 22%, rgba(255,255,255,0.45) 0 1px, transparent 2px), radial-gradient(circle at 72% 18%, rgba(255,255,255,0.35) 0 1px, transparent 2px), radial-gradient(circle at 88% 38%, rgba(255,255,255,0.28) 0 1px, transparent 2px), radial-gradient(circle at 36% 44%, rgba(255,255,255,0.25) 0 1px, transparent 2px)",
+          }}
+        />
+        {/* sky glow */}
+        <motion.div
+          aria-hidden
+          className="absolute left-1/2 top-6 h-24 w-24 -translate-x-1/2 rounded-full bg-amber-200/40 blur-2xl"
+          animate={{ scale: [1, 1.1, 1], opacity: [0.6, 0.85, 0.6] }}
+          transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
+        />
+        {/* sun */}
+        <div className="absolute left-1/2 top-7 h-10 w-10 -translate-x-1/2 rounded-full bg-gradient-to-b from-amber-100 to-amber-300 shadow-[0_0_40px_rgba(252,211,77,0.6)]" />
+
+        {/* drifting clouds */}
+        {[0, 1].map((i) => (
+          <motion.div
+            key={i}
+            aria-hidden
+            className="absolute top-8 h-3 w-14 rounded-full bg-white/30 blur-[2px]"
+            style={{ left: `${10 + i * 50}%` }}
+            animate={{ x: [0, 30, 0] }}
+            transition={{ duration: 14 + i * 4, repeat: Infinity, ease: "easeInOut" }}
+          />
+        ))}
+
+        {/* ground */}
+        <div className="absolute inset-x-0 bottom-0 h-[110px] bg-gradient-to-t from-emerald-800/70 via-emerald-700/40 to-transparent" />
+        <div className="absolute inset-x-0 bottom-0 h-[60px] bg-gradient-to-t from-emerald-900/70 to-transparent" />
+
+        {/* trees */}
+        <svg
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+          className="absolute inset-0 h-full w-full"
+        >
+          {trees.map((t) => (
+            <Tree key={t.id} x={t.x} y={t.y} size={t.size} delay={t.delay} hue={t.hue} />
+          ))}
+        </svg>
+
+        {/* little birds */}
+        {tier !== "seedling" &&
+          [0, 1].map((i) => (
+            <motion.span
+              key={i}
+              aria-hidden
+              className="absolute text-xs text-emerald-100/80"
+              initial={{ x: -20, y: 30 + i * 18 }}
+              animate={{ x: 360, y: 20 + i * 22 }}
+              transition={{
+                duration: 18 + i * 6,
+                repeat: Infinity,
+                ease: "linear",
+                delay: i * 4,
+              }}
+            >
+              ✦
+            </motion.span>
+          ))}
+        {[0, 1, 2].map((i) => (
+          <motion.span
+            key={`leaf-${i}`}
+            aria-hidden
+            className="absolute text-lg"
+            style={{ left: `${18 + i * 28}%`, top: `${42 + (i % 2) * 12}%` }}
+            animate={{ y: [0, -20, 0], rotate: [0, 180, 360], opacity: [0.65, 1, 0.65] }}
+            transition={{ duration: 5 + i, repeat: Infinity, ease: "easeInOut", delay: i * 0.7 }}
+          >
+            🍃
+          </motion.span>
+        ))}
+      </div>
+
+      <div className="relative flex items-center justify-between gap-3 px-5 py-4 sm:px-6">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-200/80">
+            Your CarbonSense Forest
+          </p>
+          <p className="mt-0.5 text-2xl font-bold tracking-tight">
+            <span className="text-2xl font-bold tabular-nums">{treeCount}</span> {treeText}{" "}
+            <span aria-hidden>🌳</span>
+          </p>
+        </div>
+        <span className="rounded-full bg-emerald-950/40 px-3 py-1.5 text-xs font-medium text-emerald-100">
+          {tier === "seedling"
+            ? "A new beginning"
+            : tier === "small"
+              ? "Taking root"
+              : tier === "forest"
+                ? "Forest patch"
+                : "Lush canopy"}
+        </span>
+      </div>
+      <p className="px-5 pb-4 text-xs text-emerald-100/75 sm:px-6">
+        Every challenge grows your forest 🌱
+      </p>
+    </section>
+  );
+}
+
+function Seedling({ progress }: { progress: number }) {
+  const h = 30 + progress * 40;
+  return (
+    <motion.svg
+      width="80"
+      height="100"
+      viewBox="0 0 80 100"
+      initial={{ scale: 0.8, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+    >
+      {/* stem */}
+      <motion.line
+        x1="40"
+        y1="100"
+        x2="40"
+        y2={100 - h}
+        stroke="#34d399"
+        strokeWidth="3"
+        strokeLinecap="round"
+        animate={{ rotate: [-1, 1, -1] }}
+        style={{ transformOrigin: "40px 100px" }}
+        transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+      />
+      {/* leaves */}
+      <motion.ellipse
+        cx="28"
+        cy={100 - h + 8}
+        rx="10"
+        ry="5"
+        fill="#34d399"
+        animate={{ rotate: [-8, -4, -8] }}
+        style={{ transformOrigin: `40px ${100 - h + 8}px` }}
+        transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+      />
+      <motion.ellipse
+        cx="52"
+        cy={100 - h + 4}
+        rx="10"
+        ry="5"
+        fill="#6ee7b7"
+        animate={{ rotate: [8, 4, 8] }}
+        style={{ transformOrigin: `40px ${100 - h + 4}px` }}
+        transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+      />
+    </motion.svg>
+  );
+}
+
+function Tree({
+  x,
+  y,
+  size,
+  delay,
+  hue,
+}: {
+  x: number;
+  y: number;
+  size: number;
+  delay: number;
+  hue: number;
+}) {
+  // size in viewBox units (0-100). Build a stylized tree.
+  const w = size / 8;
+  const h = size / 5;
+  const trunkH = h * 0.4;
+  const crownR = w * 1.2;
+  const crownY = y - trunkH - crownR * 0.4;
+
+  return (
+    <motion.g
+      initial={{ opacity: 0, transform: `translate(0px, 6px) scale(0.6)` }}
+      animate={{ opacity: 1, transform: `translate(0px, 0px) scale(1)` }}
+      transition={{ delay, duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+      style={{ transformOrigin: `${x}px ${y}px` }}
+    >
+      <motion.g
+        animate={{ rotate: [-1.2, 1.2, -1.2] }}
+        transition={{ duration: 5 + (delay * 6) % 3, repeat: Infinity, ease: "easeInOut" }}
+        style={{ transformOrigin: `${x}px ${y}px`, transformBox: "fill-box" }}
+      >
+        <rect
+          x={x - w * 0.18}
+          y={y - trunkH}
+          width={w * 0.36}
+          height={trunkH}
+          rx={w * 0.1}
+          fill="#4d3a22"
+        />
+        {/* layered crown */}
+        <circle cx={x} cy={crownY + crownR * 0.6} r={crownR} fill={`hsl(${hue} 55% 32%)`} />
+        <circle cx={x - crownR * 0.6} cy={crownY + crownR * 0.4} r={crownR * 0.85} fill={`hsl(${hue} 60% 38%)`} />
+        <circle cx={x + crownR * 0.6} cy={crownY + crownR * 0.5} r={crownR * 0.85} fill={`hsl(${hue} 58% 42%)`} />
+        <circle cx={x} cy={crownY} r={crownR * 0.9} fill={`hsl(${hue} 60% 46%)`} />
+        {/* highlight */}
+        <circle cx={x - crownR * 0.3} cy={crownY - crownR * 0.2} r={crownR * 0.25} fill={`hsl(${hue} 70% 60% / 0.55)`} />
+      </motion.g>
+    </motion.g>
+  );
+}
+
+// ---------- 2. lifetime stats ----------
+function LifetimeStats({
+  total,
+  level,
+  achievements,
+}: {
+  total: ImpactTotal;
+  level: LevelResp;
+  achievements: AchievementsResp;
+}) {
+  const { unitSystem } = useUnits();
+  const achievementTotal = achievements.total > 0 ? achievements.total : FALLBACK_ACHIEVEMENTS.length;
+  const stats = [
+    {
+      icon: <Leaf className="h-4 w-4" />,
+      label: "carbon saved",
+      valueLabel: formatCO2(total.carbon_saved_kg, unitSystem),
+    },
+    {
+      icon: <CheckCircle2 className="h-4 w-4" />,
+      label: pluralize(total.challenges_completed, "challenge done", "challenges done"),
+      value: total.challenges_completed,
+    },
+    { icon: <Flame className="h-4 w-4" />, label: "best streak", value: total.best_streak },
+    {
+      icon: <Calendar className="h-4 w-4" />,
+      label: pluralize(total.days_active, "day active", "days active"),
+      value: total.days_active,
+    },
+    { icon: <Star className="h-4 w-4" />, label: "total XP", value: level.xp },
+    {
+      icon: <Award className="h-4 w-4" />,
+      label: "achievements",
+      value: achievements.earned,
+      suffix: ` / ${achievementTotal}`,
+    },
+  ];
+
+  return (
+    <section className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
+      {stats.map((s, i) => (
+        <motion.div
+          key={s.label}
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.04 * i, duration: 0.4 }}
+          className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04] p-4 backdrop-blur"
+        >
+          <span className="absolute right-3 top-3 grid h-7 w-7 place-items-center rounded-full bg-white/5 text-emerald-200/80" aria-hidden>
+            {s.icon ?? <HelpCircle className="h-4 w-4" />}
+          </span>
+          <div className="text-2xl font-bold tracking-tight">
+            {s.valueLabel ? (
+              <span className="tabular-nums">{s.valueLabel}</span>
+            ) : (
+              <CountUp value={s.value ?? 0} className="tabular-nums" />
+            )}
+            {s.suffix && <span className="text-base text-muted-foreground">{s.suffix}</span>}
+          </div>
+          <p className="mt-0.5 text-xs text-muted-foreground">{s.label}</p>
+        </motion.div>
+      ))}
+    </section>
+  );
+}
+
+// ---------- 3. equivalencies ----------
+function Equivalencies({ items }: { items: Equivalency[] }) {
+  const visibleItems = normalizeEquivalencyItems(items);
+
+  return (
+    <section className="mt-8">
+      <h2 className="text-lg font-semibold tracking-tight">
+        What your impact looks like in the real world
+      </h2>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Same carbon savings, told a few different ways.
+      </p>
+
+      {visibleItems.length > 0 ? (
+        <div
+          className="hide-scrollbar mt-4 -mx-5 flex snap-x snap-mandatory gap-3 overflow-x-auto px-5 pb-2 sm:-mx-8 sm:px-8 lg:grid lg:grid-cols-3 lg:overflow-visible"
+          style={{ scrollbarWidth: "none" }}
+        >
+          {visibleItems.map((it, i) => (
+            <EquivCard key={it.id} item={it} index={i} />
+          ))}
+        </div>
+      ) : (
+        <p className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-5 text-center text-sm text-muted-foreground">
+          Complete challenges to unlock real-world equivalents.
+        </p>
+      )}
+    </section>
+  );
+}
+
+function EquivCard({ item, index }: { item: Equivalency; index: number }) {
+  const config = getEquivalencyConfig(item.id);
+  const displayValue = formatEquivalencyValue(item.value);
+  const unit = pluralize(Math.round(item.value), config.unit, `${config.unit}s`);
+  const fact = equivalencyFacts[item.id] ?? "Small savings add up faster than they look.";
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.04 * index, duration: 0.4 }}
+      className="relative min-w-[200px] shrink-0 snap-center overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-emerald-500/15 via-teal-500/10 to-sky-500/15 p-5 sm:w-[260px] lg:w-auto"
+    >
+      <div className="absolute -right-10 -top-10 h-32 w-32 rounded-full bg-emerald-300/20 blur-2xl" />
+      <div className="relative flex items-start gap-3">
+        <span className="text-4xl" aria-hidden>
+          {config.icon}
+        </span>
+        <div className="min-w-0">
+          <h3 className="text-base font-bold leading-tight text-foreground">{config.title}</h3>
+          <p className="mt-2 text-3xl font-bold tracking-tight">
+            <CountUp value={item.value} decimal={item.value > 0 && item.value < 1} formatter={formatEquivalencyValue} />
+            <span className="ml-1 text-sm font-medium text-emerald-100/80">{displayValue.startsWith("<") ? config.unit : unit}</span>
+          </p>
+        </div>
+      </div>
+      <p className="relative mt-3 text-sm leading-relaxed text-emerald-50/85">{fact}</p>
+    </motion.div>
+  );
+}
+
+// ---------- 4. level progress ----------
+function LevelProgress({ level }: { level: LevelResp }) {
+  const pct = level.xp_to_next > 0 ? Math.min(1, level.xp_into_current / level.xp_to_next) : 1;
+
+  return (
+    <section className="mt-8 rounded-3xl border border-white/10 bg-white/[0.04] p-5">
+      <div className="flex items-center gap-3">
+        <motion.span
+          className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 text-2xl text-emerald-950 shadow-[0_18px_40px_-15px_rgba(16,185,129,0.6)]"
+          animate={{ scale: [1, 1.04, 1] }}
+          transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+        >
+          {level.current.icon}
+        </motion.span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-200/80">
+            Level {level.current.level}
+          </p>
+          <p className="truncate text-lg font-semibold tracking-tight">{level.current.name}</p>
+        </div>
+        {level.next && (
+          <span className="rounded-full bg-white/10 px-3 py-1 text-xs text-foreground/80">
+            Next: {level.next.name}
+          </span>
+        )}
+      </div>
+
+      <div className="mt-4">
+        <div className="h-2.5 w-full overflow-hidden rounded-full bg-white/10">
+          <motion.div
+            initial={{ width: 0 }}
+            animate={{ width: `${pct * 100}%` }}
+            transition={{ duration: 1.1, ease: [0.22, 1, 0.36, 1] }}
+            className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-teal-300 shadow-[0_0_18px_rgba(52,211,153,0.7)]"
+          />
+        </div>
+        <p className="mt-2 text-xs text-muted-foreground">
+          {level.next ? (
+            <>
+              <span className="font-medium tabular-nums text-foreground">
+                {level.current.xp_required + level.xp_into_current} /{" "}
+                {level.current.xp_required + level.xp_to_next}
+              </span>{" "}
+              XP to Level {level.next.level}
+            </>
+          ) : (
+            <>Max level reached.</>
+          )}
+        </p>
+      </div>
+
+      <ul className="mt-5 space-y-1.5">
+        {level.levels.map((l) => {
+          const reached = l.level < level.current.level;
+          const current = l.level === level.current.level;
+          const badgeActive = reached || current;
+          return (
+            <li
+              key={l.level}
+              className={[
+                "flex items-center gap-3 rounded-xl border px-3 py-2 transition",
+                current
+                  ? "border-emerald-300/40 bg-emerald-400/10"
+                  : reached
+                    ? "border-white/5 bg-white/[0.02]"
+                    : "border-white/5 bg-transparent opacity-60",
+              ].join(" ")}
+            >
+              <span
+                className={[
+                  "grid h-10 w-10 flex-none place-items-center rounded-full text-base font-bold",
+                  badgeActive
+                    ? "bg-gradient-to-br from-emerald-400 to-teal-500 text-emerald-950"
+                    : "bg-white/10 text-foreground/35",
+                ].join(" ")}
+              >
+                {l.level}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium">
+                  Level {l.level} · {l.name}
+                </p>
+                <p className="text-[11px] text-muted-foreground tabular-nums">
+                  {l.xp_required.toLocaleString()} XP
+                </p>
+              </div>
+              {current ? (
+                <motion.span
+                  animate={{ boxShadow: ["0 0 0px rgba(52,211,153,0.5)", "0 0 16px rgba(52,211,153,0.8)", "0 0 0px rgba(52,211,153,0.5)"] }}
+                  transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                  className="rounded-full bg-emerald-300/90 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-950"
+                >
+                  Current
+                </motion.span>
+              ) : reached ? (
+                <CheckCircle2 className="h-4 w-4 text-emerald-300" />
+              ) : (
+                <Lock className="h-4 w-4 text-foreground/40" />
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+// ---------- 5. achievements ----------
+function AchievementsGallery({
+  data,
+  onOpen,
+}: {
+  data: AchievementsResp;
+  onOpen: (a: Achievement) => void;
+}) {
+  const sourceAchievements = data.achievements.length > 0 ? data.achievements : FALLBACK_ACHIEVEMENTS;
+  const earnedCount = sourceAchievements.filter((achievement) => achievement.earned).length;
+  const totalCount = sourceAchievements.length;
+
+  // newest earned first, then unearned by progress percent desc.
+  const sorted = useMemo(() => {
+    const earned = [...sourceAchievements.filter((a) => a.earned)].sort(
+      (a, b) => +new Date(b.earned_at ?? 0) - +new Date(a.earned_at ?? 0),
+    );
+    const unearned = [...sourceAchievements.filter((a) => !a.earned)].sort((a, b) => {
+      const pa = a.progress ? a.progress.current / a.progress.target : 0;
+      const pb = b.progress ? b.progress.current / b.progress.target : 0;
+      return pb - pa;
+    });
+    return [...earned, ...unearned];
+  }, [sourceAchievements]);
+
+  const newestId = sorted[0]?.earned ? sorted[0].id : null;
+
+  return (
+    <section className="mt-8">
+      <div className="flex items-baseline justify-between">
+        <h2 className="text-lg font-semibold tracking-tight">Your Achievements</h2>
+        <span className="text-sm tabular-nums text-muted-foreground">
+          <span className="font-semibold text-foreground">{earnedCount}</span>/{totalCount}
+        </span>
+      </div>
+
+      <div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+        {sorted.map((a, i) => {
+          const isNewest = a.id === newestId;
+          const pct = a.progress ? Math.min(1, a.progress.current / a.progress.target) : 0;
+          return (
+            <motion.button
+              key={a.id}
+              type="button"
+              onClick={() => onOpen(a)}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.02 * i, duration: 0.3 }}
+              whileTap={{ scale: 0.97 }}
+              className={[
+                "relative flex flex-col items-center rounded-2xl border p-3 text-center transition",
+                a.earned
+                  ? "border-emerald-300/20 bg-gradient-to-br from-emerald-500/10 to-teal-500/5 hover:border-emerald-300/40"
+                  : "border-white/5 bg-white/[0.02] hover:border-white/10",
+              ].join(" ")}
+            >
+              {isNewest && (
+                <motion.span
+                  initial={{ scale: 0, rotate: -10 }}
+                  animate={{ scale: [0, 1.1, 1], rotate: [-10, 0] }}
+                  transition={{ duration: 0.6 }}
+                  className="absolute -right-1 -top-1 rounded-full bg-amber-300 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-950 shadow-[0_6px_16px_-6px_rgba(252,211,77,0.8)]"
+                >
+                  New
+                </motion.span>
+              )}
+              <span
+                className={[
+                  "text-3xl transition",
+                  a.earned ? "" : "grayscale opacity-50",
+                ].join(" ")}
+                aria-hidden
+              >
+                {a.emoji}
+              </span>
+              <p
+                className={[
+                  "mt-1.5 line-clamp-2 text-[11px] font-semibold leading-tight",
+                  a.earned ? "text-foreground" : "text-foreground/60",
+                ].join(" ")}
+              >
+                {a.name}
+              </p>
+              {a.earned ? (
+                <p className="mt-1 text-[10px] text-emerald-300/90">
+                  {a.earned_at ? formatShortDate(a.earned_at) : "Earned"}
+                </p>
+              ) : (
+                <>
+                  <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-white/10">
+                    <div
+                      className="h-full rounded-full bg-emerald-300/80"
+                      style={{ width: `${pct * 100}%` }}
+                    />
+                  </div>
+                  {a.progress && (
+                    <p className="mt-1 text-[10px] tabular-nums text-muted-foreground">
+                      {a.progress.current}/{a.progress.target} {a.progress.unit}
+                    </p>
+                  )}
+                </>
+              )}
+            </motion.button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function AchievementSheet({
+  achievement,
+  onClose,
+}: {
+  achievement: Achievement;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const pct = achievement.progress
+    ? Math.min(1, achievement.progress.current / achievement.progress.target)
+    : achievement.earned
+      ? 1
+      : 0;
+
+  return (
+    <>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        onClick={onClose}
+        className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-sm"
+      />
+      <motion.div
+        role="dialog"
+        aria-modal="true"
+        aria-label={achievement.name}
+        initial={{ y: "100%" }}
+        animate={{ y: 0 }}
+        exit={{ y: "100%" }}
+        transition={{ type: "spring", stiffness: 320, damping: 32 }}
+        className="modal-sheet fixed inset-x-0 bottom-0 z-[81] border border-b-0 border-white/10 bg-[oklch(0.18_0.03_180)] px-5 pt-3 sm:inset-x-auto sm:bottom-6 sm:left-1/2 sm:-translate-x-1/2 sm:border-b"
+      >
+        <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-white/15 sm:hidden" />
+        <div className="flex items-start justify-between">
+          <div className="flex items-center gap-3">
+            <span
+              className={[
+                "grid h-14 w-14 place-items-center rounded-2xl text-3xl",
+                achievement.earned
+                  ? "bg-gradient-to-br from-emerald-400 to-teal-500 text-emerald-950"
+                  : "bg-white/5 grayscale",
+              ].join(" ")}
+            >
+              {achievement.emoji}
+            </span>
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-200/80">
+                {achievement.earned ? "Earned" : "Locked"}
+              </p>
+              <h3 className="text-lg font-semibold tracking-tight">{achievement.name}</h3>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="grid h-9 w-9 place-items-center rounded-full border border-white/10 bg-white/5 transition hover:bg-white/10"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <p className="mt-4 text-sm leading-relaxed text-foreground/85">{achievement.description}</p>
+
+        {achievement.earned ? (
+          <p className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-emerald-400/15 px-3 py-1.5 text-xs text-emerald-200">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            Earned {achievement.earned_at ? formatShortDate(achievement.earned_at) : ""}
+          </p>
+        ) : achievement.progress ? (
+          <div className="mt-5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">Progress</span>
+              <span className="tabular-nums font-medium">
+                {achievement.progress.current}/{achievement.progress.target} {achievement.progress.unit}
+              </span>
+            </div>
+            <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-white/10">
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: `${pct * 100}%` }}
+                transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1] }}
+                className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-teal-300"
+              />
+            </div>
+          </div>
+        ) : null}
+      </motion.div>
+    </>
+  );
+}
+
+// ---------- 6. share ----------
+function ShareCard({
+  name,
+  kg,
+  streak,
+  trees,
+  levelName,
+}: {
+  name: string;
+  kg: number;
+  streak: number;
+  trees: number;
+  levelName: string;
+}) {
+  const { unitSystem } = useUnits();
+  const [busy, setBusy] = useState(false);
+  const streakText = `${streak} ${pluralize(streak, "day", "days")}`;
+  const treeText = `${trees} ${pluralize(trees, "tree", "trees")}`;
+  const carbonSavedText = formatCO2(kg, unitSystem);
+
+  const text = useMemo(
+    () =>
+      [
+        `${name}'s CarbonSense Impact`,
+        `` ,
+        `${carbonSavedText} saved`,
+        `${streakText} best streak`,
+        `${treeText} worth`,
+        `Level: ${levelName}`,
+        `` ,
+        `Sense the change. Make it count. - CarbonSense`,
+      ].join("\n"),
+    [name, carbonSavedText, streakText, treeText, levelName],
+  );
+
+  const share = async () => {
+    setBusy(true);
+    try {
+      const nav = typeof navigator !== "undefined" ? navigator : null;
+      if (nav && typeof nav.share === "function") {
+        try {
+          await nav.share({ title: "My CarbonSense Impact", text });
+          toast.success("Shared!");
+          return;
+        } catch {
+          // user cancelled or share failed - fall through to clipboard
+        }
+      }
+      if (nav?.clipboard?.writeText) {
+        await nav.clipboard.writeText(text);
+        toast.success("Impact card copied! Share it on social media.");
+      } else {
+        toast.error("Sharing is not supported in this browser.");
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="mt-8">
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+        className="relative overflow-hidden rounded-3xl border border-emerald-200/20 bg-gradient-to-br from-emerald-400/30 via-teal-400/20 to-sky-500/20 p-6 shadow-[0_30px_80px_-30px_rgba(16,185,129,0.6)]"
+      >
+        <div className="absolute -right-16 -top-16 h-56 w-56 rounded-full bg-emerald-300/30 blur-3xl" />
+        <div className="absolute -bottom-16 -left-16 h-56 w-56 rounded-full bg-teal-300/20 blur-3xl" />
+
+        <p className="relative text-[11px] font-semibold uppercase tracking-wider text-emerald-100">
+          Share your impact with the world
+        </p>
+        <h2 className="relative mt-1 text-2xl font-bold tracking-tight">
+          {name}'s CarbonSense Impact
+        </h2>
+
+        <div className="relative mt-4 rounded-2xl border border-white/15 bg-emerald-950/30 p-4 backdrop-blur">
+          <div className="flex items-center justify-between">
+            <span className="flex items-center gap-1.5 text-xs font-semibold text-emerald-100">
+              <span className="grid h-5 w-5 place-items-center rounded-md bg-gradient-to-br from-emerald-400 to-teal-300 text-emerald-950">
+                <Leaf className="h-3.5 w-3.5" />
+              </span>
+              CarbonSense
+            </span>
+            <span className="text-[10px] uppercase tracking-wider text-emerald-200/80">
+              {levelName}
+            </span>
+          </div>
+          <ul className="mt-3 grid grid-cols-3 gap-2 text-center">
+            <ShareStat icon={<Leaf className="h-4 w-4" />} value={carbonSavedText} label="saved" />
+            <ShareStat icon={<Flame className="h-4 w-4" />} value={streakText} label="streak" />
+            <ShareStat icon={<HelpCircle className="h-4 w-4" />} value={treeText} label="forest" />
+          </ul>
+        </div>
+
+        <button
+          type="button"
+          onClick={share}
+          disabled={busy}
+          className="relative mt-5 inline-flex w-full items-center justify-center gap-2 rounded-full bg-white px-6 py-3.5 text-sm font-semibold text-emerald-900 shadow-[0_20px_50px_-15px_rgba(255,255,255,0.4)] transition hover:scale-[1.01] active:scale-[0.99] disabled:opacity-60"
+        >
+          {busy ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <>
+              <Share2 className="h-4 w-4" />
+              Share my impact
+            </>
+          )}
+        </button>
+      </motion.div>
+    </section>
+  );
+}
+
+function ShareStat({ icon, value, label }: { icon: ReactNode; value: string; label: string }) {
+  return (
+    <li className="rounded-xl bg-white/5 px-2 py-2">
+      <div className="mx-auto grid h-6 w-6 place-items-center rounded-full bg-white/10 text-emerald-100" aria-hidden>
+        {icon}
+      </div>
+      <div className="mt-0.5 text-sm font-bold tabular-nums">{value}</div>
+      <div className="text-[10px] text-emerald-100/80">{label}</div>
+    </li>
+  );
+}
+
+// ---------- helpers ----------
+function CountUp({
+  value,
+  decimal,
+  className,
+  formatter,
+}: {
+  value: number;
+  decimal?: boolean;
+  className?: string;
+  formatter?: (value: number) => string;
+}) {
+  const mv = useMotionValue(0);
+  const formatted = useTransform(mv, (v) => {
+    if (formatter) return formatter(v);
+    if (decimal) return v.toFixed(1);
+    if (Math.abs(value) >= 1000) return Math.round(v).toLocaleString();
+    return Math.round(v).toString();
+  });
+  useEffect(() => {
+    const controls = animate(mv, value, { duration: 1.2, ease: [0.22, 1, 0.36, 1] });
+    return controls.stop;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+  return (
+    <span className={className}>
+      <motion.span className="tabular-nums">{formatted}</motion.span>
+    </span>
+  );
+}
+
+function pluralize(count: number, singular: string, plural: string) {
+  return Math.abs(count) === 1 ? singular : plural;
+}
+
+function titleizeKey(key: string) {
+  return key
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function getEquivalencyConfig(id: string) {
+  return (
+    equivalencyConfig[id] ?? {
+      title: titleizeKey(id),
+      icon: "🌍",
+      unit: titleizeKey(id).toLowerCase(),
+    }
+  );
+}
+
+function formatEquivalencyValue(value: number): string {
+  if (value === 0) return "0";
+  if (value < 0.1) return "< 0.1";
+  if (value < 1) return value.toFixed(1);
+  return Math.round(value).toLocaleString();
+}
+
+function normalizeEquivalencyItems(items: Equivalency[]) {
+  return items
+    .map((item) => ({ ...item, value: Number(item.value ?? 0) }))
+    .filter((item) => item.value > 0)
+    .sort((a, b) => b.value - a.value);
+}
+
+function formatShortDate(iso: string) {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  } catch {
+    return "";
+  }
+}
+
+function ImpactSkeleton() {
+  return (
+    <div className="space-y-6">
+      <div className="h-[330px] animate-pulse rounded-3xl bg-white/[0.04]" />
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="h-24 animate-pulse rounded-2xl bg-white/[0.04]" />
+        ))}
+      </div>
+      <div className="h-44 animate-pulse rounded-3xl bg-white/[0.04]" />
+      <div className="h-64 animate-pulse rounded-3xl bg-white/[0.04]" />
+    </div>
+  );
+}
+
+// Avoid unused-import warnings for icons we keep handy for future polish.
+void Award;
+void Calendar;
+void Flame;
+void Leaf;
+void Star;
+void Trophy;

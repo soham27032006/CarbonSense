@@ -1,0 +1,40 @@
+# Logs
+*.log
+logs/
+.codex-logs/
+dev-run.log
+dev-server.err.log
+dev-server.out.log
+carbonsense-api/dev-smoke.err
+carbonsense-api/dev-smoke.out
+
+# Dependency directories
+node_modules/
+
+# Build outputs
+dist/
+dist-ssr/
+.output/
+.vinxi/
+.tanstack/
+.nitro/
+
+# Environment files
+.env
+.env.local
+.env.development
+.env.production
+.env.staging
+.env.*.local
+.env.test
+
+# Editor/System files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

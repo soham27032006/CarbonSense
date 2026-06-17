@@ -1,0 +1,262 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  overflow-x: hidden;
+  color-scheme: dark;
+  text-size-adjust: 100%;
+  -webkit-text-size-adjust: 100%;
+  font-size: clamp(15px, 0.94rem + 0.12vw, 17px);
+}
+
+body {
+  min-width: 320px;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#root,
+#main-content {
+  min-height: 100dvh;
+}
+
+img,
+svg,
+canvas,
+video {
+  max-width: 100%;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  touch-action: manipulation;
+}
+
+button,
+[role="button"],
+input,
+select,
+textarea {
+  min-height: 44px;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  max-width: 100%;
+  font-size: 16px;
+}
+
+textarea {
+  overflow-wrap: anywhere;
+}
+
+.app-layout {
+  min-height: 100dvh;
+  overflow-x: hidden;
+}
+
+.main-content {
+  min-width: 0;
+  min-height: 100dvh;
+}
+
+.page-container {
+  width: min(100%, 72rem);
+  margin-inline: auto;
+  padding-inline: clamp(1rem, 3vw, 2rem);
+  padding-bottom: calc(6rem + env(safe-area-inset-bottom));
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.875rem;
+}
+
+.form-container {
+  width: min(100%, 32rem);
+  margin-inline: auto;
+}
+
+.bottom-tab-bar {
+  padding-bottom: max(env(safe-area-inset-bottom), 0.75rem);
+}
+
+.sidebar-nav {
+  display: none;
+}
+
+.floating-ai-btn {
+  right: max(1rem, env(safe-area-inset-right));
+  bottom: calc(5rem + env(safe-area-inset-bottom));
+}
+
+.copilot-panel {
+  height: 100dvh;
+  max-height: 100dvh;
+  border-radius: 0;
+  overscroll-behavior: contain;
+}
+
+.modal-sheet {
+  width: 100%;
+  max-height: 85dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: 1.5rem 1.5rem 0 0;
+  padding-bottom: max(env(safe-area-inset-bottom), 1rem);
+}
+
+.chart-wrap {
+  height: 200px;
+}
+
+.onboarding-options {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+  width: min(100%, 32rem);
+  margin-inline: auto;
+}
+
+.onboarding-option-card {
+  min-height: 56px;
+  width: 100%;
+}
+
+.carbon-age-reveal {
+  min-height: 48px;
+}
+
+.hide-scrollbar {
+  scrollbar-width: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  body::-webkit-scrollbar,
+  .main-content::-webkit-scrollbar {
+    display: none;
+  }
+
+  .main-content {
+    scrollbar-width: none;
+  }
+
+  h1,
+  h2,
+  h3,
+  p,
+  span,
+  button,
+  a {
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (min-width: 640px) {
+  .card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .chart-wrap {
+    height: 260px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .app-layout {
+    display: grid;
+    grid-template-columns: 18rem minmax(0, 1fr);
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .sidebar-nav {
+    position: sticky;
+    top: 0;
+    display: flex;
+    height: 100dvh;
+    flex-direction: column;
+    gap: 0.5rem;
+    border-right: 1px solid oklch(1 0 0 / 0.08);
+    background: oklch(0.15 0.03 180 / 0.78);
+    padding: 1.25rem;
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+  }
+
+  .main-content {
+    width: 100%;
+    height: 100dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+
+  .main-content > main > div[class*="max-w-2xl"],
+  .main-content > main > div[class*="max-w-3xl"],
+  .main-content > main > header > div[class*="max-w-2xl"],
+  .main-content > main > header > div[class*="max-w-3xl"] {
+    max-width: 72rem;
+  }
+
+  .bottom-tab-bar {
+    display: none;
+  }
+
+  .card-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .floating-ai-btn {
+    right: 1.5rem;
+    bottom: 1.5rem;
+  }
+
+  .copilot-panel {
+    inset: 0 0 0 auto;
+    width: 420px;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 1.5rem 0 0 1.5rem;
+  }
+
+  .modal-sheet {
+    width: min(100%, 30rem);
+    max-height: min(85dvh, 44rem);
+    border-radius: 1rem;
+    padding-bottom: 1.5rem;
+  }
+
+  .chart-wrap {
+    height: 300px;
+  }
+
+  .onboarding-options {
+    max-width: 64rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .onboarding-options.track-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .carbon-age-reveal {
+    min-height: 64px;
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "carbonsense",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "node scripts/dev-supervisor.js",
+    "dev:api": "npm run dev --prefix carbonsense-api",
+    "dev:web": "npm run dev --prefix carbonsense-web",
+    "dev:raw": "concurrently \"npm run dev:api\" \"npm run dev:web\"",
+    "build": "cd carbonsense-web && npm run build",
+    "install:all": "cd carbonsense-api && npm install && cd ../carbonsense-web && npm install"
+  },
+  "devDependencies": {
+    "concurrently": "^8.0.0"
+  }
+}

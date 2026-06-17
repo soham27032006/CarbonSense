@@ -1,0 +1,28 @@
+INSERT INTO public.achievements (
+  name,
+  description,
+  icon,
+  condition_type,
+  threshold,
+  xp_reward
+) VALUES
+  ('First Step', 'Complete your first challenge', 'footprints', 'streak', 1, 10),
+  ('Week Warrior', '7-day streak', 'flame', 'streak', 7, 50),
+  ('Fortnight Force', '14-day streak', 'calendar-days', 'streak', 14, 100),
+  ('Monthly Master', '30-day streak', 'calendar-check', 'streak', 30, 200),
+  ('Century Club', '100-day streak', 'badge-cent', 'streak', 100, 500),
+  ('Year of Change', '365-day streak', 'trophy', 'streak', 365, 1000),
+  ('Challenge Starter', 'Complete 5 challenges', 'badge-check', 'challenges_completed', 5, 25),
+  ('Challenge Enthusiast', 'Complete 25 challenges', 'medal', 'challenges_completed', 25, 100),
+  ('Challenge Champion', 'Complete 100 challenges', 'award', 'challenges_completed', 100, 300),
+  ('Challenge Legend', 'Complete 500 challenges', 'crown', 'challenges_completed', 500, 750),
+  ('First Kilo', 'Save your first 1 kg of CO2', 'leaf', 'carbon_saved', 1, 10),
+  ('Tree Saver', 'Save 22 kg - equivalent to 1 tree/year', 'tree-pine', 'carbon_saved', 22, 50),
+  ('Ton Down', 'Save 1 ton of CO2', 'scale', 'carbon_saved', 1000, 500),
+  ('Forest Guardian', 'Save 5 tons - a small forest', 'trees', 'carbon_saved', 5000, 1000),
+  ('Level 5 Reached', 'Reach level 5', 'star', 'level', 5, 100),
+  ('Level 10 Reached', 'Reach level 10', 'sparkles', 'level', 10, 500),
+  ('Team Player', 'Join your first team', 'users', 'custom', 1, 25),
+  ('Social Butterfly', 'Invite 3 friends', 'send', 'custom', 3, 50),
+  ('Bank Connected', 'Connect your first bank account', 'landmark', 'custom', 1, 25),
+  ('AI Explorer', 'Have 10 conversations with AI Copilot', 'bot', 'custom', 10, 75);
