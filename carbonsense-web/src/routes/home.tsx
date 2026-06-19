@@ -173,22 +173,22 @@ function HomePage() {
       setStatus("completed");
       setConfetti(true);
       toast.success(`Challenge complete! +${xpEarned} XP`);
-      setDashboard((d) => {
-        if (!d) return d;
-        const newStreak = d.streak.current + 1;
-        return {
-          ...d,
-          streak: {
-            ...d.streak,
-            current: newStreak,
-            max: Math.max(d.streak.max, newStreak),
-          },
-          current_level: {
-            ...d.current_level,
-            xp: d.current_level.xp + xpEarned,
-          },
-        };
-      });
+      // Streak / level values are reconciled by `invalidateCore` inside
+      // `useCompleteChallenge.onSuccess`, which refetches the dashboard
+      // and streaks queries. The `useEffect` above re-syncs `dashboard`
+      // state from the fresh response — no manual bump needed (and a
+      // manual bump would briefly desync Home from the canonical source).
+      setDashboard((d) =>
+        d
+          ? {
+              ...d,
+              current_level: {
+                ...d.current_level,
+                xp: d.current_level.xp + xpEarned,
+              },
+            }
+          : d,
+      );
       setTimeout(() => setConfetti(false), 2200);
     } catch (error) {
       toast.error(getApiErrorMessage(error, "Couldn't complete the challenge. Try again."), {
@@ -228,7 +228,7 @@ function HomePage() {
   return (
     <main className="relative overflow-x-hidden bg-background text-foreground">
       <Ambient />
-      <StickyHeader streak={dashboard?.streak.current} avatarName={firstName} />
+      <StickyHeader avatarName={firstName} />
 
       <motion.div
         initial={{ opacity: 0, y: 12 }}

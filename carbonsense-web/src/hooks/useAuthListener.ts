@@ -7,9 +7,6 @@ type HydratedAuthProfile = {
   name?: string | null;
   avatar_url?: string | null;
   onboarding_complete?: boolean | null;
-  streak?: number;
-  level?: number;
-  level_name?: string;
 };
 
 async function hydrateProfile(userId: string, accessToken?: string): Promise<HydratedAuthProfile | null> {
@@ -27,35 +24,14 @@ async function hydrateProfile(userId: string, accessToken?: string): Promise<Hyd
   }
 }
 
-async function hydrateProgress(accessToken?: string): Promise<{
-  streak?: number;
-  level?: number;
-  level_name?: string;
-} | null> {
-  try {
-    const { data } = await api.get<{
-      streak?: number;
-      level?: number;
-      level_name?: string;
-    }>("/profile", {
-      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
-    });
-    if (!data || typeof data !== "object") return null;
-    return {
-      streak: typeof data.streak === "number" ? data.streak : undefined,
-      level: typeof data.level === "number" ? data.level : undefined,
-      level_name: typeof data.level_name === "string" ? data.level_name : undefined,
-    };
-  } catch (error) {
-    console.warn("[auth] Could not hydrate progress", { error });
-    return null;
-  }
-}
-
 /**
  * Wires Supabase auth into the Zustand store. Mount once at the root.
  * Also hydrates `onboarding_complete` from the profiles table so the
  * onboarding gate can route correctly.
+ *
+ * Streak lives in React Query (`useCurrentStreak`) — never here. The auth
+ * store only hydrates once per session and would otherwise freeze the
+ * streak at its sign-in value forever.
  */
 export function useAuthListener() {
   const setSession = useAuthStore((s) => s.setSession);
@@ -78,7 +54,6 @@ export function useAuthListener() {
         return;
       }
       const profile = await hydrateProfile(session.user.id, session.access_token);
-      const progress = await hydrateProgress(session.access_token);
       setUser({
         id: session.user.id,
         email: session.user.email ?? "",
@@ -89,9 +64,6 @@ export function useAuthListener() {
           profile?.avatar_url ??
           ((session.user.user_metadata?.avatar_url as string | undefined) ?? null),
         onboarding_complete: profile?.onboarding_complete ?? true,
-        streak: progress?.streak,
-        level: progress?.level,
-        level_name: progress?.level_name,
       });
     };
 

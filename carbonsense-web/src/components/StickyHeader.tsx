@@ -5,6 +5,7 @@ import { Bell, Sparkles } from "lucide-react";
 import { useMobileNav } from "@/components/MobileNavContext";
 import { useAuthStore } from "@/stores/authStore";
 import { useCopilotSafe } from "@/components/copilot/CopilotProvider";
+import { useCurrentStreak } from "@/hooks/useApi";
 
 function resolveFirstLetter(value: string | null | undefined): string {
   const trimmed = (value ?? "").trim();
@@ -13,6 +14,11 @@ function resolveFirstLetter(value: string | null | undefined): string {
 
 interface StickyHeaderProps {
   avatarName?: string;
+  /**
+   * @deprecated Pass `undefined` and let the header pull the canonical streak
+   * from React Query. This prop is kept only for tests / Storybook; using it
+   * from app code bypasses the cache invalidations on challenge mutations.
+   */
   streak?: number;
   left?: ReactNode;
   center?: ReactNode;
@@ -154,6 +160,7 @@ export function StickyHeader({ avatarName, streak, left, center, right }: Sticky
   const mobileNav = useMobileNav();
   const user = useAuthStore((s) => s.user);
   const copilot = useCopilotSafe();
+  const canonicalStreak = useCurrentStreak();
   const avatarLetter = useMemo(() => {
     const explicit = resolveFirstLetter(avatarName);
     if (explicit) return explicit;
@@ -167,15 +174,12 @@ export function StickyHeader({ avatarName, streak, left, center, right }: Sticky
   const notifRef = useRef<HTMLDivElement>(null);
   const unreadCount = 0;
 
-  // Prefer an explicitly passed streak (live from a page query) so it stays
-  // fresh after actions like accepting a challenge; otherwise fall back to the
-  // auth store value hydrated on sign-in by useAuthListener.
+  // Canonical source is React Query via `useCurrentStreak`, which is
+  // invalidated by accept/complete/skip mutations. The `streak` prop is
+  // retained as a deprecated escape hatch (tests, Storybook) but app
+  // code must not pass it.
   const effectiveStreak =
-    typeof streak === "number"
-      ? streak
-      : typeof user?.streak === "number"
-      ? user.streak
-      : undefined;
+    typeof streak === "number" ? streak : canonicalStreak;
 
   useEffect(() => {
     if (!showNotifications) return;

@@ -138,6 +138,24 @@ export const useStreaks = () =>
     queryFn: () => api.get("/streaks").then((r) => r.data),
   });
 
+/**
+ * Canonical streak count for the current user.
+ *
+ * Single source of truth — every page reads streak through this hook so
+ * Home / Dashboard / Challenges / etc. can never disagree. Backed by
+ * `GET /streaks`, which is invalidated on every accept/complete/skip via
+ * `invalidateCore` so the value updates immediately after a mutation.
+ *
+ * Returns `undefined` until the first response arrives; consumers should
+ * pass the value straight to a chip that already handles `undefined`
+ * (e.g. `<StreakChip streak={…}>` hides itself when the number isn't ready).
+ */
+export const useCurrentStreak = (): number | undefined => {
+  const { data } = useStreaks();
+  const current = (data as { current?: number } | undefined)?.current;
+  return typeof current === "number" ? current : undefined;
+};
+
 export const useUseStreakFreeze = () => {
   const qc = useQueryClient();
   return useMutation({
