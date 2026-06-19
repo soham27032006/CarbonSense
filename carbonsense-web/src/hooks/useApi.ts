@@ -1,3 +1,6 @@
+/**
+ * React Query hooks for CarbonSense API resources. Provides typed cache keys, mutations, and invalidation behavior for route components.
+ */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import api from "../lib/api";
 import { useAuthStore } from "@/stores/authStore";
@@ -39,6 +42,11 @@ function useAuthedQuery<TData>(options: {
 }
 
 // Auth
+/**
+ * Provides the useCurrentUser React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useCurrentUser = () =>
   useAuthedQuery({
     queryKey: ["auth-me"],
@@ -48,6 +56,11 @@ export const useCurrentUser = () =>
   });
 
 // Dashboard
+/**
+ * Provides the useDashboard React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useDashboard = () =>
   useAuthedQuery({
     queryKey: ["dashboard"],
@@ -56,6 +69,11 @@ export const useDashboard = () =>
     refetchOnWindowFocus: false,
   });
 
+/**
+ * Provides the useTransactions React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useTransactions = (params?: QueryParams) =>
   useAuthedQuery({
     queryKey: ["transactions", cleanParams(params)],
@@ -63,12 +81,25 @@ export const useTransactions = (params?: QueryParams) =>
       api.get("/carbon/transactions", { params: cleanParams(params) }).then((r) => r.data),
   });
 
+/**
+ * Provides the useTrends React Query hook for CarbonSense screens.
+ * @param period - Input consumed by this workflow.
+ * @param range - Input consumed by this workflow.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useTrends = (period: string, range: number) =>
   useAuthedQuery({
     queryKey: ["trends", period, range],
     queryFn: () => api.get("/carbon/trends", { params: { period, range } }).then((r) => r.data),
   });
 
+/**
+ * Provides the useCategoryDetail React Query hook for CarbonSense screens.
+ * @param category - Input consumed by this workflow.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useCategoryDetail = (category: string) =>
   useAuthedQuery({
     queryKey: ["category-detail", category],
@@ -76,6 +107,11 @@ export const useCategoryDetail = (category: string) =>
     enabled: Boolean(category),
   });
 
+/**
+ * Provides the useComparison React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useComparison = () =>
   useAuthedQuery({
     queryKey: ["comparison"],
@@ -83,6 +119,11 @@ export const useComparison = () =>
   });
 
 // Challenges
+/**
+ * Provides the useTodayChallenge React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useTodayChallenge = () =>
   useAuthedQuery({
     queryKey: ["challenge-today"],
@@ -91,6 +132,11 @@ export const useTodayChallenge = () =>
     refetchOnWindowFocus: false,
   });
 
+/**
+ * Provides the useAcceptChallenge React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useAcceptChallenge = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -99,6 +145,11 @@ export const useAcceptChallenge = () => {
   });
 };
 
+/**
+ * Provides the useCompleteChallenge React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useCompleteChallenge = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -107,6 +158,11 @@ export const useCompleteChallenge = () => {
   });
 };
 
+/**
+ * Provides the useSkipChallenge React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useSkipChallenge = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -116,6 +172,11 @@ export const useSkipChallenge = () => {
   });
 };
 
+/**
+ * Provides the useChallengeHistory React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useChallengeHistory = (params?: QueryParams) =>
   useAuthedQuery({
     queryKey: ["challenge-history", cleanParams(params)],
@@ -123,6 +184,11 @@ export const useChallengeHistory = (params?: QueryParams) =>
       api.get("/challenges/history", { params: cleanParams(params) }).then((r) => r.data),
   });
 
+/**
+ * Provides the useChallengeLibrary React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useChallengeLibrary = () =>
   useAuthedQuery({
     queryKey: ["challenge-library"],
@@ -132,6 +198,11 @@ export const useChallengeLibrary = () =>
   });
 
 // Streaks and gamification
+/**
+ * Provides the useStreaks React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useStreaks = () =>
   useAuthedQuery({
     queryKey: ["streaks"],
@@ -156,6 +227,11 @@ export const useCurrentStreak = (): number | undefined => {
   return typeof current === "number" ? current : undefined;
 };
 
+/**
+ * Provides the useUseStreakFreeze React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useUseStreakFreeze = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -164,12 +240,22 @@ export const useUseStreakFreeze = () => {
   });
 };
 
+/**
+ * Provides the useAchievements React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useAchievements = () =>
   useAuthedQuery({
     queryKey: ["achievements"],
     queryFn: () => api.get("/achievements").then((r) => r.data),
   });
 
+/**
+ * Provides the useLevel React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useLevel = () =>
   useAuthedQuery({
     queryKey: ["level"],
@@ -177,17 +263,32 @@ export const useLevel = () =>
   });
 
 // Copilot
+/**
+ * Provides the useCopilotChat React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useCopilotChat = () =>
   useMutation({
     mutationFn: (message: string) => api.post("/copilot/chat", { message }).then((r) => r.data),
   });
 
+/**
+ * Provides the useCopilotSuggestions React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useCopilotSuggestions = () =>
   useAuthedQuery({
     queryKey: ["copilot-suggestions"],
     queryFn: () => api.get("/copilot/suggestions").then((r) => r.data),
   });
 
+/**
+ * Provides the useCopilotHistory React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useCopilotHistory = () =>
   useAuthedQuery({
     queryKey: ["copilot-history"],
@@ -195,12 +296,22 @@ export const useCopilotHistory = () =>
   });
 
 // Teams
+/**
+ * Provides the useMyTeams React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useMyTeams = () =>
   useAuthedQuery({
     queryKey: ["my-teams"],
     queryFn: () => api.get("/teams/my-teams").then((r) => r.data),
   });
 
+/**
+ * Provides the useCreateTeam React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useCreateTeam = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -210,6 +321,11 @@ export const useCreateTeam = () => {
   });
 };
 
+/**
+ * Provides the useJoinTeam React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useJoinTeam = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -219,6 +335,12 @@ export const useJoinTeam = () => {
   });
 };
 
+/**
+ * Provides the useTeam React Query hook for CarbonSense screens.
+ * @param id - Input consumed by this workflow.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useTeam = (id: string) =>
   useAuthedQuery({
     queryKey: ["team", id],
@@ -226,6 +348,13 @@ export const useTeam = (id: string) =>
     enabled: Boolean(id),
   });
 
+/**
+ * Provides the useTeamLeaderboard React Query hook for CarbonSense screens.
+ * @param id - Input consumed by this workflow.
+ * @param period - Input consumed by this workflow.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useTeamLeaderboard = (id: string, period: string) =>
   useAuthedQuery({
     queryKey: ["team-leaderboard", id, period],
@@ -235,18 +364,33 @@ export const useTeamLeaderboard = (id: string, period: string) =>
   });
 
 // Impact
+/**
+ * Provides the useImpact React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useImpact = () =>
   useAuthedQuery({
     queryKey: ["impact"],
     queryFn: () => api.get("/impact/total").then((r) => r.data),
   });
 
+/**
+ * Provides the useImpactEquivalencies React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useImpactEquivalencies = () =>
   useAuthedQuery({
     queryKey: ["impact-equivalencies"],
     queryFn: () => api.get("/impact/equivalencies").then((r) => r.data),
   });
 
+/**
+ * Provides the useShareCard React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useShareCard = () =>
   useAuthedQuery({
     queryKey: ["share-card"],
@@ -254,12 +398,22 @@ export const useShareCard = () =>
   });
 
 // Profile
+/**
+ * Provides the useProfile React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useProfile = () =>
   useAuthedQuery({
     queryKey: ["profile"],
     queryFn: () => api.get("/profile").then((r) => r.data),
   });
 
+/**
+ * Provides the useUpdateProfile React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useUpdateProfile = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -268,35 +422,65 @@ export const useUpdateProfile = () => {
   });
 };
 
+/**
+ * Provides the useCarbonAge React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useCarbonAge = () =>
   useAuthedQuery({
     queryKey: ["carbon-age"],
     queryFn: () => api.get("/profile/carbon-age").then((r) => r.data),
   });
 
+/**
+ * Provides the useDeleteAccount React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useDeleteAccount = () =>
   useMutation({
     mutationFn: () => api.delete("/profile").then((r) => r.data),
   });
 
 // Plaid
+/**
+ * Provides the useCreateLinkToken React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useCreateLinkToken = () =>
   useMutation({
     mutationFn: () => api.post("/plaid/create-link-token").then((r) => r.data),
   });
 
+/**
+ * Provides the useExchangePlaidToken React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useExchangePlaidToken = () =>
   useMutation({
     mutationFn: (data: { public_token: string; institution: { id: string; name: string } }) =>
       api.post("/plaid/exchange-token", data).then((r) => r.data),
   });
 
+/**
+ * Provides the useSyncTransactions React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useSyncTransactions = () =>
   useMutation({
     mutationFn: (connection_id: string) =>
       api.post("/plaid/sync-transactions", { connection_id }).then((r) => r.data),
   });
 
+/**
+ * Provides the useDisconnectBank React Query hook for CarbonSense screens.
+ * @returns Returns the React Query result or mutation object for the API operation.
+ * @throws Surfaces request failures through React Query error state.
+ */
 export const useDisconnectBank = () => {
   const qc = useQueryClient();
   return useMutation({

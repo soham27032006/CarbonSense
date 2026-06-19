@@ -1,3 +1,6 @@
+/**
+ * Controller layer for authenticated CarbonSense API requests. Validates request context, delegates business work to services, and returns stable response envelopes.
+ */
 import type { NextFunction, Request, Response } from "express";
 import { z } from "zod";
 import { AppError } from "../middleware/errorHandler";
@@ -41,6 +44,11 @@ function toTeamError(error: unknown): AppError {
   return new AppError(message, 400, "TEAM_REQUEST_FAILED");
 }
 
+/**
+ * Handles the createTeamController API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function createTeamController(
   req: Request,
   res: Response,
@@ -67,6 +75,11 @@ export async function createTeamController(
   }
 }
 
+/**
+ * Handles the joinTeamController API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function joinTeamController(
   req: Request,
   res: Response,
@@ -88,6 +101,11 @@ export async function joinTeamController(
   }
 }
 
+/**
+ * Handles the getMyTeamsController API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function getMyTeamsController(
   req: Request,
   res: Response,
@@ -102,6 +120,11 @@ export async function getMyTeamsController(
   }
 }
 
+/**
+ * Handles the getTeamController API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function getTeamController(
   req: Request,
   res: Response,
@@ -123,6 +146,11 @@ export async function getTeamController(
   }
 }
 
+/**
+ * Handles the getLeaderboardController API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function getLeaderboardController(
   req: Request,
   res: Response,

@@ -1,3 +1,6 @@
+/**
+ * Service layer for CarbonSense domain logic. Keeps persistence, third-party API calls, and calculations behind controller-safe functions.
+ */
 import { supabaseAdmin } from "../config/supabase";
 import type { Json } from "../types";
 import { disconnectBank } from "./plaid.service";
@@ -128,6 +131,12 @@ function normalizeProfileSettings(
   };
 }
 
+/**
+ * Runs the getProfile service workflow for CarbonSense domain data.
+ * @param userId - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function getProfile(userId: string) {
   const { data: user, error } = await supabaseAdmin
     .from("users")
@@ -239,6 +248,13 @@ export async function getProfile(userId: string) {
   };
 }
 
+/**
+ * Runs the updateProfile service workflow for CarbonSense domain data.
+ * @param userId - Input consumed by this workflow.
+ * @param update - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function updateProfile(userId: string, update: ProfileUpdate) {
   const { settings, ...directFields } = update;
   const dbUpdate: Record<string, unknown> = {};
@@ -327,6 +343,12 @@ export async function updateProfile(userId: string, update: ProfileUpdate) {
   return getProfile(userId);
 }
 
+/**
+ * Runs the getCarbonAgeDetail service workflow for CarbonSense domain data.
+ * @param userId - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function getCarbonAgeDetail(userId: string) {
   const { data: user, error } = await supabaseAdmin
     .from("users")
@@ -362,6 +384,12 @@ export async function getCarbonAgeDetail(userId: string) {
   };
 }
 
+/**
+ * Runs the deleteProfile service workflow for CarbonSense domain data.
+ * @param userId - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function deleteProfile(userId: string): Promise<{
   success: true;
   message: string;

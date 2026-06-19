@@ -1,3 +1,6 @@
+/**
+ * Service layer for CarbonSense domain logic. Keeps persistence, third-party API calls, and calculations behind controller-safe functions.
+ */
 import { supabaseAdmin } from "../config/supabase";
 import { todayIndia, yesterdayIndia } from "../utils/date";
 import { addXP } from "./gamification.service";
@@ -23,6 +26,11 @@ const streakMilestoneBonusXp = new Map<number, number>([
   [365, 1000]
 ]);
 
+/**
+ * Runs the incrementStreak service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function incrementStreak(
   userId: string
 ): Promise<IncrementStreakResult> {
@@ -87,6 +95,11 @@ export async function incrementStreak(
   };
 }
 
+/**
+ * Runs the checkAndResetStreak service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function checkAndResetStreak(
   userId: string
 ): Promise<StreakResetResult> {
@@ -160,6 +173,12 @@ export async function checkAndResetStreak(
   return { streak_reset: true, previous_streak: previousStreak };
 }
 
+/**
+ * Runs the regenerateStreakFreeze service workflow for CarbonSense domain data.
+ * @param userId - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function regenerateStreakFreeze(userId: string): Promise<{
   success: true;
   freeze_available: boolean;
@@ -195,6 +214,12 @@ export async function regenerateStreakFreeze(userId: string): Promise<{
   return { success: true, freeze_available: user.streak_freeze_available };
 }
 
+/**
+ * Runs the useStreakFreeze service workflow for CarbonSense domain data.
+ * @param userId - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function useStreakFreeze(userId: string): Promise<{
   success: true;
   remaining_freezes: 0;
@@ -225,6 +250,12 @@ export async function useStreakFreeze(userId: string): Promise<{
   return { success: true, remaining_freezes: 0 };
 }
 
+/**
+ * Runs the getStreakInfo service workflow for CarbonSense domain data.
+ * @param userId - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function getStreakInfo(userId: string) {
   await regenerateStreakFreeze(userId);
   const streakStatus = await checkAndResetStreak(userId);

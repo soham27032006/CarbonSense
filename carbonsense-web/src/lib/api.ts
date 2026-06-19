@@ -1,3 +1,6 @@
+/**
+ * Frontend API client and response normalizer for CarbonSense. Centralizes transport configuration and backend envelope handling.
+ */
 import axios, { type AxiosResponse } from "axios";
 import { supabase } from "./supabase";
 import { API_BASE } from "./api-base";

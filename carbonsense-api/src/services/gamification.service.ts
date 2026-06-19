@@ -1,3 +1,6 @@
+/**
+ * Service layer for CarbonSense domain logic. Keeps persistence, third-party API calls, and calculations behind controller-safe functions.
+ */
 import { supabaseAdmin } from "../config/supabase";
 import type { Achievement } from "../types";
 
@@ -31,6 +34,12 @@ export const LEVEL_NAMES = [
   "Climate Guardian"
 ] as const;
 
+/**
+ * Runs the getLevelForXp service workflow for CarbonSense domain data.
+ * @param xp - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export function getLevelForXp(xp: number): LevelResult {
   let thresholdIndex = 0;
 
@@ -46,11 +55,22 @@ export function getLevelForXp(xp: number): LevelResult {
   };
 }
 
+/**
+ * Runs the getXpToNextLevel service workflow for CarbonSense domain data.
+ * @param xp - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export function getXpToNextLevel(xp: number): number {
   const nextThreshold = LEVEL_THRESHOLDS.find((threshold) => threshold > xp);
   return nextThreshold ? nextThreshold - xp : 0;
 }
 
+/**
+ * Runs the addXP service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function addXP(
   userId: string,
   amount: number
@@ -91,6 +111,12 @@ export async function addXP(
   };
 }
 
+/**
+ * Runs the checkAchievements service workflow for CarbonSense domain data.
+ * @param userId - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function checkAchievements(userId: string): Promise<Achievement[]> {
   const [userState, completedCount, carbonSavedKg, achievements, earnedIds] =
     await Promise.all([
@@ -154,6 +180,12 @@ export async function checkAchievements(userId: string): Promise<Achievement[]> 
   return newlyEarned;
 }
 
+/**
+ * Runs the getProgress service workflow for CarbonSense domain data.
+ * @param userId - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function getProgress(userId: string) {
   const [
     { data: user, error: userError },
@@ -204,6 +236,12 @@ export async function getProgress(userId: string) {
   };
 }
 
+/**
+ * Runs the getAllAchievementsWithUserProgress service workflow for CarbonSense domain data.
+ * @param userId - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function getAllAchievementsWithUserProgress(userId: string) {
   const [{ data: achievements, error }, earnedIds] = await Promise.all([
     supabaseAdmin.from("achievements").select("*").order("threshold", {

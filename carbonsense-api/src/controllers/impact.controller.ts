@@ -1,3 +1,6 @@
+/**
+ * Controller layer for authenticated CarbonSense API requests. Validates request context, delegates business work to services, and returns stable response envelopes.
+ */
 import type { NextFunction, Request, Response } from "express";
 import { AppError } from "../middleware/errorHandler";
 import {
@@ -19,6 +22,11 @@ function toImpactError(error: unknown): AppError {
   return new AppError(message, 400, "IMPACT_REQUEST_FAILED");
 }
 
+/**
+ * Handles the total API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function total(
   req: Request,
   res: Response,
@@ -33,6 +41,11 @@ export async function total(
   }
 }
 
+/**
+ * Handles the equivalencies API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function equivalencies(
   req: Request,
   res: Response,
@@ -47,6 +60,11 @@ export async function equivalencies(
   }
 }
 
+/**
+ * Handles the shareCard API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function shareCard(
   req: Request,
   res: Response,

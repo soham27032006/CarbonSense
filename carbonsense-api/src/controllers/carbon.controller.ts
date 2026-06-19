@@ -1,3 +1,6 @@
+/**
+ * Controller layer for authenticated CarbonSense API requests. Validates request context, delegates business work to services, and returns stable response envelopes.
+ */
 import type { NextFunction, Request, Response } from "express";
 import { z } from "zod";
 import { AppError } from "../middleware/errorHandler";
@@ -44,6 +47,11 @@ function toCarbonError(error: unknown): AppError {
   return new AppError(message, 400, "CARBON_REQUEST_FAILED");
 }
 
+/**
+ * Handles the dashboard API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function dashboard(
   req: Request,
   res: Response,
@@ -63,6 +71,11 @@ export async function dashboard(
   }
 }
 
+/**
+ * Handles the transactions API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function transactions(
   req: Request,
   res: Response,
@@ -83,6 +96,11 @@ export async function transactions(
   }
 }
 
+/**
+ * Handles the trends API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function trends(
   req: Request,
   res: Response,
@@ -103,6 +121,11 @@ export async function trends(
   }
 }
 
+/**
+ * Handles the categoryDetail API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function categoryDetail(
   req: Request,
   res: Response,
@@ -125,6 +148,11 @@ export async function categoryDetail(
   }
 }
 
+/**
+ * Handles the compare API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function compare(
   req: Request,
   res: Response,

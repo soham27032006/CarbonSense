@@ -1,3 +1,6 @@
+/**
+ * Service layer for CarbonSense domain logic. Keeps persistence, third-party API calls, and calculations behind controller-safe functions.
+ */
 import crypto from "crypto";
 import { redis, redisEnabled } from "../config/redis";
 import { supabaseAdmin } from "../config/supabase";
@@ -8,6 +11,11 @@ type LeaderboardPeriod = "week" | "month" | "alltime";
 
 const leaderboardCacheTtlSeconds = 60 * 60;
 
+/**
+ * Runs the createTeam service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function createTeam(
   userId: string,
   name: string,
@@ -36,6 +44,11 @@ export async function createTeam(
   throw new Error("Unable to generate a unique invite code");
 }
 
+/**
+ * Runs the joinTeam service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function joinTeam(
   userId: string,
   inviteCode: string
@@ -61,6 +74,13 @@ export async function joinTeam(
   return data as Team;
 }
 
+/**
+ * Runs the getTeam service workflow for CarbonSense domain data.
+ * @param userId - Input consumed by this workflow.
+ * @param teamId - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function getTeam(userId: string, teamId: string) {
   await verifyMembership(userId, teamId);
   const [{ data: team, error: teamError }, members, activeChallenge] =
@@ -93,6 +113,11 @@ export async function getTeam(userId: string, teamId: string) {
   };
 }
 
+/**
+ * Runs the getLeaderboard service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function getLeaderboard(
   userId: string,
   teamId: string,
@@ -147,6 +172,12 @@ export async function getLeaderboard(
   return payload;
 }
 
+/**
+ * Runs the getMyTeams service workflow for CarbonSense domain data.
+ * @param userId - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function getMyTeams(userId: string) {
   const { data: memberships, error } = await supabaseAdmin
     .from("team_memberships")
@@ -180,6 +211,12 @@ export async function getMyTeams(userId: string) {
   return teams.filter((team): team is Team & { role: string; joined_at: string } => Boolean(team));
 }
 
+/**
+ * Runs the updateTeamStats service workflow for CarbonSense domain data.
+ * @param teamId - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function updateTeamStats(teamId: string): Promise<void> {
   const members = await getTeamMembersWithUsers(teamId);
   const memberIds = members.map((member) => member.user_id);
@@ -211,6 +248,12 @@ export async function updateTeamStats(teamId: string): Promise<void> {
   await clearTeamLeaderboardCache(teamId);
 }
 
+/**
+ * Runs the updateUserTeamStats service workflow for CarbonSense domain data.
+ * @param userId - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function updateUserTeamStats(userId: string): Promise<void> {
   const { data: memberships, error } = await supabaseAdmin
     .from("team_memberships")

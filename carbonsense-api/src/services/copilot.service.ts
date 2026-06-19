@@ -1,3 +1,6 @@
+/**
+ * Service layer for CarbonSense domain logic. Keeps persistence, third-party API calls, and calculations behind controller-safe functions.
+ */
 import { z } from "zod";
 import { supabaseAdmin } from "../config/supabase";
 import type { CarbonCategory, CopilotConversation, CopilotMessage } from "../types";
@@ -26,6 +29,11 @@ const suggestionsSchema = z.object({
   suggestions: z.array(z.string().min(1)).min(1).max(3)
 });
 
+/**
+ * Runs the chat service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function chat(
   userId: string,
   userMessage: string
@@ -77,6 +85,12 @@ export async function chat(
   };
 }
 
+/**
+ * Runs the getSuggestions service workflow for CarbonSense domain data.
+ * @param userId - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function getSuggestions(userId: string): Promise<string[]> {
   const context = await getUserContext(userId);
   const prompts = [
@@ -97,6 +111,12 @@ export async function getSuggestions(userId: string): Promise<string[]> {
   return prompts;
 }
 
+/**
+ * Runs the getHistory service workflow for CarbonSense domain data.
+ * @param userId - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function getHistory(userId: string): Promise<CopilotMessage[]> {
   const conversation = await getOrCreateConversation(userId);
 

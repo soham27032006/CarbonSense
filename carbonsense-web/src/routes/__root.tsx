@@ -1,3 +1,6 @@
+/**
+ * TanStack route module for CarbonSense web screens. Defines route metadata and page-level UI composition.
+ */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   Outlet,

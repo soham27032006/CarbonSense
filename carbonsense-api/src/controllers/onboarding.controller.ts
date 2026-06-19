@@ -1,3 +1,6 @@
+/**
+ * Controller layer for authenticated CarbonSense API requests. Validates request context, delegates business work to services, and returns stable response envelopes.
+ */
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { supabaseAdmin } from "../config/supabase";
@@ -112,6 +115,11 @@ function requireUserId(req: Request): string {
   return req.user.id;
 }
 
+/**
+ * Handles the submitOnboardingQuiz API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function submitOnboardingQuiz(
   req: Request,
   res: Response
@@ -156,6 +164,11 @@ export async function submitOnboardingQuiz(
   });
 }
 
+/**
+ * Handles the completeOnboarding API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function completeOnboarding(
   req: Request,
   res: Response

@@ -1,3 +1,6 @@
+/**
+ * Service layer for CarbonSense domain logic. Keeps persistence, third-party API calls, and calculations behind controller-safe functions.
+ */
 import { supabaseAdmin } from "../config/supabase";
 import { addXP, checkAchievements } from "./gamification.service";
 import { incrementStreak } from "./streak.service";
@@ -55,6 +58,11 @@ function getChallengeEmoji(challenge: Challenge): string {
   return challengeEmojiByIcon[challenge.icon] ?? challengeEmojiByIcon[challenge.category] ?? "○";
 }
 
+/**
+ * Runs the getTodayChallenge service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function getTodayChallenge(
   userId: string,
   altOffset = 0
@@ -94,6 +102,11 @@ async function getTodaysRejectedChallengeIds(
   return Array.from(ids);
 }
 
+/**
+ * Runs the acceptChallenge service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function acceptChallenge(
   userId: string,
   challengeId: string
@@ -118,6 +131,11 @@ export async function acceptChallenge(
   return hydrateChallenge(data, userId);
 }
 
+/**
+ * Runs the completeChallenge service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function completeChallenge(
   userId: string,
   challengeId: string
@@ -172,6 +190,11 @@ export async function completeChallenge(
   };
 }
 
+/**
+ * Runs the skipChallenge service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function skipChallenge(
   userId: string,
   challengeId: string,
@@ -198,6 +221,11 @@ export async function skipChallenge(
   return assignBestChallenge(userId, todayIndia(), assignment.challenge_id);
 }
 
+/**
+ * Runs the getChallengeHistory service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function getChallengeHistory(
   userId: string,
   page: number,
@@ -240,6 +268,11 @@ export async function getChallengeHistory(
   };
 }
 
+/**
+ * Runs the getChallengeLibrary service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function getChallengeLibrary() {
   const { data, error } = await supabaseAdmin
     .from("challenges")

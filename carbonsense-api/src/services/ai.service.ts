@@ -1,3 +1,6 @@
+/**
+ * Service layer for CarbonSense domain logic. Keeps persistence, third-party API calls, and calculations behind controller-safe functions.
+ */
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { env } from "../config/env";
 
@@ -47,6 +50,11 @@ async function withAiRetry<T>(work: () => Promise<T>): Promise<T> {
   throw new Error("AI request failed after retry");
 }
 
+/**
+ * Runs the chatWithAI service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function chatWithAI(
   systemPrompt: string,
   userMessage: string,
@@ -71,6 +79,11 @@ User: ${userMessage}` : userMessage;
   });
 }
 
+/**
+ * Runs the classifyCarbon service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function classifyCarbon(
   merchantName: string,
   category: string,
@@ -84,6 +97,12 @@ Return ONLY valid JSON: {"carbon_category":"food|transport|home|shopping|travel|
   return JSON.parse(extractJson(result.response.text()));
 }
 
+/**
+ * Runs the extractJson service workflow for CarbonSense domain data.
+ * @param text - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export function extractJson(text: string): string {
   const trimmed = text.trim();
   const withoutFence = trimmed

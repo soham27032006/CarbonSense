@@ -1,3 +1,6 @@
+/**
+ * Controller layer for authenticated CarbonSense API requests. Validates request context, delegates business work to services, and returns stable response envelopes.
+ */
 import type { NextFunction, Request, Response } from "express";
 import { z } from "zod";
 import { AppError } from "../middleware/errorHandler";
@@ -51,6 +54,11 @@ function toProfileError(error: unknown): AppError {
   return new AppError(message, 400, "PROFILE_REQUEST_FAILED");
 }
 
+/**
+ * Handles the getProfileController API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function getProfileController(
   req: Request,
   res: Response,
@@ -65,6 +73,11 @@ export async function getProfileController(
   }
 }
 
+/**
+ * Handles the updateProfileController API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function updateProfileController(
   req: Request,
   res: Response,
@@ -85,6 +98,11 @@ export async function updateProfileController(
   }
 }
 
+/**
+ * Handles the getCarbonAgeController API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function getCarbonAgeController(
   req: Request,
   res: Response,
@@ -99,6 +117,11 @@ export async function getCarbonAgeController(
   }
 }
 
+/**
+ * Handles the deleteProfileController API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function deleteProfileController(
   req: Request,
   res: Response,

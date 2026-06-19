@@ -1,3 +1,6 @@
+/**
+ * Controller layer for authenticated CarbonSense API requests. Validates request context, delegates business work to services, and returns stable response envelopes.
+ */
 import type { NextFunction, Request, Response } from "express";
 import { z } from "zod";
 import { AppError } from "../middleware/errorHandler";
@@ -47,6 +50,15 @@ function toChallengeError(error: unknown): AppError {
   return new AppError(message, 400, "CHALLENGE_REQUEST_FAILED");
 }
 
+function forwardChallengeError(error: unknown, next: NextFunction): void {
+  next(error instanceof z.ZodError ? error : toChallengeError(error));
+}
+
+/**
+ * Handles the today API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function today(
   req: Request,
   res: Response,
@@ -57,16 +69,15 @@ export async function today(
     const challenge = await getTodayChallenge(requireUserId(req), alt);
     res.status(200).json({ success: true, data: { challenge } });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      next(error);
-      return;
-    }
-
-    next(toChallengeError(error));
-    return;
+    forwardChallengeError(error, next);
   }
 }
 
+/**
+ * Handles the accept API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function accept(
   req: Request,
   res: Response,
@@ -77,16 +88,15 @@ export async function accept(
     const challenge = await acceptChallenge(requireUserId(req), id);
     res.status(200).json({ success: true, data: { challenge } });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      next(error);
-      return;
-    }
-
-    next(toChallengeError(error));
-    return;
+    forwardChallengeError(error, next);
   }
 }
 
+/**
+ * Handles the complete API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function complete(
   req: Request,
   res: Response,
@@ -97,16 +107,15 @@ export async function complete(
     const result = await completeChallenge(requireUserId(req), id);
     res.status(200).json({ success: true, data: result });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      next(error);
-      return;
-    }
-
-    next(toChallengeError(error));
-    return;
+    forwardChallengeError(error, next);
   }
 }
 
+/**
+ * Handles the skip API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function skip(
   req: Request,
   res: Response,
@@ -115,29 +124,18 @@ export async function skip(
   try {
     const { id } = paramsSchema.parse(req.params);
     const { reason } = skipSchema.parse(req.body ?? {});
-    const alternative_challenge = await skipChallenge(
-      requireUserId(req),
-      id,
-      reason
-    );
-
-    res.status(200).json({
-      success: true,
-      data: {
-        alternative_challenge
-      }
-    });
+    const alternative_challenge = await skipChallenge(requireUserId(req), id, reason);
+    res.status(200).json({ success: true, data: { alternative_challenge } });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      next(error);
-      return;
-    }
-
-    next(toChallengeError(error));
-    return;
+    forwardChallengeError(error, next);
   }
 }
 
+/**
+ * Handles the history API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function history(
   req: Request,
   res: Response,
@@ -153,16 +151,15 @@ export async function history(
 
     res.status(200).json({ success: true, data });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      next(error);
-      return;
-    }
-
-    next(toChallengeError(error));
-    return;
+    forwardChallengeError(error, next);
   }
 }
 
+/**
+ * Handles the library API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function library(
   req: Request,
   res: Response,

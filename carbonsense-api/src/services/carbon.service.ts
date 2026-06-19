@@ -1,3 +1,6 @@
+/**
+ * Service layer for CarbonSense domain logic. Keeps persistence, third-party API calls, and calculations behind controller-safe functions.
+ */
 import { z } from "zod";
 import type { ChallengeCategory } from "../types";
 import type { CarbonCategory, CarbonSource, Json } from "../types";
@@ -144,6 +147,11 @@ function getCountryTargetTons(country: string): number {
   return country.toUpperCase() === "US" ? US_TARGET_TONS : US_TARGET_TONS;
 }
 
+/**
+ * Runs the getCategoryBreakdown service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export function getCategoryBreakdown(
   quizData: OnboardingQuizData
 ): CategoryBreakdown {
@@ -156,6 +164,11 @@ export function getCategoryBreakdown(
   };
 }
 
+/**
+ * Runs the calculateCarbonFromOnboarding service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export function calculateCarbonFromOnboarding(
   quizData: OnboardingQuizData
 ): number {
@@ -168,6 +181,11 @@ export function calculateCarbonFromOnboarding(
   return roundTons(annualTons);
 }
 
+/**
+ * Runs the calculateCarbonAge service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export function calculateCarbonAge(
   bioAge: number,
   annualTons: number,
@@ -179,6 +197,13 @@ export function calculateCarbonAge(
   return Math.max(0, Math.round(carbonAge));
 }
 
+/**
+ * Runs the getPercentile service workflow for CarbonSense domain data.
+ * @param annualTons - Input consumed by this workflow.
+ * @param country - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export function getPercentile(annualTons: number, country: string): number {
   const averageTons = country.toUpperCase() === "US" ? US_AVERAGE_TONS : US_AVERAGE_TONS;
   const percentile = (annualTons / averageTons) * 50;
@@ -186,6 +211,11 @@ export function getPercentile(annualTons: number, country: string): number {
   return Math.min(99, Math.max(1, Math.round(percentile)));
 }
 
+/**
+ * Runs the getHighestCarbonCategory service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export function getHighestCarbonCategory(
   breakdown: CategoryBreakdown
 ): keyof CategoryBreakdown {
@@ -198,6 +228,11 @@ export function getHighestCarbonCategory(
   )[0];
 }
 
+/**
+ * Runs the toChallengeCategory service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export function toChallengeCategory(
   category: keyof CategoryBreakdown
 ): ChallengeCategory {
@@ -206,6 +241,12 @@ export function toChallengeCategory(
 
 export const defaultBiologicalAge = DEFAULT_BIOLOGICAL_AGE;
 
+/**
+ * Runs the normalizeMerchantName service workflow for CarbonSense domain data.
+ * @param merchantName - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export function normalizeMerchantName(merchantName: string): string {
   return merchantName
     .toLowerCase()
@@ -319,6 +360,11 @@ function toClassification(
   };
 }
 
+/**
+ * Runs the classifyTransaction service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function classifyTransaction(
   merchantName: string,
   plaidCategory: string,
@@ -349,6 +395,11 @@ export async function classifyTransaction(
   return classifyWithAI(merchantName, plaidCategory, amount);
 }
 
+/**
+ * Runs the classifyWithAI service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function classifyWithAI(
   merchantName: string,
   category: string,
@@ -368,6 +419,12 @@ export async function classifyWithAI(
   };
 }
 
+/**
+ * Runs the getDashboard service workflow for CarbonSense domain data.
+ * @param userId - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function getDashboard(userId: string) {
   const today = todayIndia();
   const week = getDateRangeBounds(today, 6);
@@ -483,6 +540,11 @@ export async function getDashboard(userId: string) {
   };
 }
 
+/**
+ * Runs the getTransactions service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function getTransactions(
   userId: string,
   filters: TransactionFilters
@@ -557,6 +619,11 @@ export async function getTransactions(
   };
 }
 
+/**
+ * Runs the getTrends service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function getTrends(
   userId: string,
   period: "weekly" | "monthly",
@@ -687,6 +754,11 @@ function formatPeriodLabel(
   return parsed.toLocaleDateString("en-US", { month: "short", year: "2-digit", timeZone: "UTC" });
 }
 
+/**
+ * Runs the getCategoryDetail service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function getCategoryDetail(
   userId: string,
   category: CarbonCategory
@@ -751,6 +823,12 @@ export async function getCategoryDetail(
   };
 }
 
+/**
+ * Runs the getComparison service workflow for CarbonSense domain data.
+ * @param userId - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function getComparison(userId: string) {
   const today = todayIndia();
   const thisMonth = getPeriodBounds(today, "month");
@@ -849,6 +927,12 @@ function formatKg(value: number): string {
   return `${Math.round(value)} kg`;
 }
 
+/**
+ * Runs the generateDailyInsight service workflow for CarbonSense domain data.
+ * @param userId - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function generateDailyInsight(userId: string): Promise<string> {
   const { data, error } = await supabaseAdmin
     .from("transactions")
@@ -901,6 +985,11 @@ function getNewUserInsight(): string {
   return insights[dayIndex];
 }
 
+/**
+ * Runs the refreshCarbonSummaries service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function refreshCarbonSummaries(
   userId: string,
   date: string

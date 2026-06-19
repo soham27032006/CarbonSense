@@ -1,3 +1,6 @@
+/**
+ * TanStack route module for CarbonSense web screens. Defines route metadata and page-level UI composition.
+ */
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";

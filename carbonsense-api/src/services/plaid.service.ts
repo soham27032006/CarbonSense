@@ -1,3 +1,6 @@
+/**
+ * Service layer for CarbonSense domain logic. Keeps persistence, third-party API calls, and calculations behind controller-safe functions.
+ */
 import crypto from "crypto";
 import {
   Configuration,
@@ -144,6 +147,12 @@ async function getOwnedConnection(
   return data;
 }
 
+/**
+ * Runs the createLinkToken service workflow for CarbonSense domain data.
+ * @param userId - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function createLinkToken(userId: string): Promise<string> {
   const response = await getPlaidClient().linkTokenCreate({
     user: {
@@ -159,6 +168,11 @@ export async function createLinkToken(userId: string): Promise<string> {
   return response.data.link_token;
 }
 
+/**
+ * Runs the exchangePublicToken service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function exchangePublicToken(
   userId: string,
   publicToken: string,
@@ -204,6 +218,11 @@ export async function exchangePublicToken(
   };
 }
 
+/**
+ * Runs the syncTransactions service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function syncTransactions(
   userId: string,
   connectionId: string
@@ -308,6 +327,11 @@ export async function syncTransactions(
   };
 }
 
+/**
+ * Runs the disconnectBank service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function disconnectBank(
   userId: string,
   connectionId: string
@@ -343,6 +367,11 @@ export async function disconnectBank(
   return sanitizeConnection(data);
 }
 
+/**
+ * Runs the handlePlaidWebhook service workflow for CarbonSense domain data.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function handlePlaidWebhook(
   payload: PlaidWebhookPayload
 ): Promise<{ handled: boolean; synced_connections: number }> {

@@ -1,6 +1,15 @@
+/**
+ * Service layer for CarbonSense domain logic. Keeps persistence, third-party API calls, and calculations behind controller-safe functions.
+ */
 import { supabaseAdmin } from "../config/supabase";
 import { getEquivalencies } from "../utils/equivalencies";
 
+/**
+ * Runs the getImpactTotal service workflow for CarbonSense domain data.
+ * @param userId - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function getImpactTotal(userId: string) {
   const [
     { data: user, error: userError },
@@ -49,6 +58,12 @@ export async function getImpactTotal(userId: string) {
   };
 }
 
+/**
+ * Runs the getImpactEquivalencies service workflow for CarbonSense domain data.
+ * @param userId - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function getImpactEquivalencies(userId: string) {
   const carbonSavedKg = await getLifetimeCarbonSaved(userId);
   const equivalencies = getEquivalencies(carbonSavedKg);
@@ -80,6 +95,12 @@ export async function getImpactEquivalencies(userId: string) {
   };
 }
 
+/**
+ * Runs the getImpactShareCard service workflow for CarbonSense domain data.
+ * @param userId - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function getImpactShareCard(userId: string) {
   const [{ data: user, error }, carbonSavedKg, challengesCompleted] =
     await Promise.all([
@@ -116,6 +137,12 @@ export async function getImpactShareCard(userId: string) {
   };
 }
 
+/**
+ * Runs the getLifetimeCarbonSaved service workflow for CarbonSense domain data.
+ * @param userId - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
 export async function getLifetimeCarbonSaved(userId: string): Promise<number> {
   const { data, error } = await supabaseAdmin
     .from("user_challenges")

@@ -1,3 +1,6 @@
+/**
+ * Controller layer for authenticated CarbonSense API requests. Validates request context, delegates business work to services, and returns stable response envelopes.
+ */
 import type { NextFunction, Request, Response } from "express";
 import { AppError } from "../middleware/errorHandler";
 import {
@@ -24,6 +27,11 @@ function toStreakError(error: unknown): AppError {
   return new AppError(message, 400, "STREAK_REQUEST_FAILED");
 }
 
+/**
+ * Handles the getStreakInfoController API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function getStreakInfoController(
   req: Request,
   res: Response,
@@ -38,6 +46,11 @@ export async function getStreakInfoController(
   }
 }
 
+/**
+ * Handles the useStreakFreezeController API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function useStreakFreezeController(
   req: Request,
   res: Response,
@@ -52,6 +65,11 @@ export async function useStreakFreezeController(
   }
 }
 
+/**
+ * Handles the getAllAchievementsWithUserProgressController API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function getAllAchievementsWithUserProgressController(
   req: Request,
   res: Response,
@@ -66,6 +84,11 @@ export async function getAllAchievementsWithUserProgressController(
   }
 }
 
+/**
+ * Handles the getLevelProgressController API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function getLevelProgressController(
   req: Request,
   res: Response,

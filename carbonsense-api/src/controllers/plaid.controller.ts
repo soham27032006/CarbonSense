@@ -1,3 +1,6 @@
+/**
+ * Controller layer for authenticated CarbonSense API requests. Validates request context, delegates business work to services, and returns stable response envelopes.
+ */
 import type { NextFunction, Request, Response } from "express";
 import { z } from "zod";
 import { AppError } from "../middleware/errorHandler";
@@ -41,6 +44,11 @@ function toBankError(error: unknown): AppError {
   );
 }
 
+/**
+ * Handles the createPlaidLinkToken API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function createPlaidLinkToken(
   req: Request,
   res: Response,
@@ -61,6 +69,11 @@ export async function createPlaidLinkToken(
   }
 }
 
+/**
+ * Handles the exchangePlaidToken API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function exchangePlaidToken(
   req: Request,
   res: Response,
@@ -93,6 +106,11 @@ export async function exchangePlaidToken(
   }
 }
 
+/**
+ * Handles the syncPlaidTransactions API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function syncPlaidTransactions(
   req: Request,
   res: Response,
@@ -118,6 +136,11 @@ export async function syncPlaidTransactions(
   }
 }
 
+/**
+ * Handles the disconnectPlaidBank API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function disconnectPlaidBank(
   req: Request,
   res: Response,
@@ -147,6 +170,11 @@ export async function disconnectPlaidBank(
   }
 }
 
+/**
+ * Handles the plaidWebhook API request and returns the existing response contract.
+ * @returns Sends a JSON response through Express.
+ * @throws Forwards validation, authentication, and service failures to Express error middleware.
+ */
 export async function plaidWebhook(
   req: Request,
   res: Response,
