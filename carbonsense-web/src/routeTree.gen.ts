@@ -24,35 +24,6 @@ import { Route as ChallengesRouteImport } from './routes/challenges'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as TeamsIdRouteImport } from './routes/teams.$id'
 import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
-import { Route as ApiStreaksRouteImport } from './routes/api.streaks'
-import { Route as ApiProfileRouteImport } from './routes/api.profile'
-import { Route as ApiLevelRouteImport } from './routes/api.level'
-import { Route as ApiAchievementsRouteImport } from './routes/api.achievements'
-import { Route as ApiTeamsMyTeamsRouteImport } from './routes/api.teams.my-teams'
-import { Route as ApiTeamsCreateRouteImport } from './routes/api.teams.create'
-import { Route as ApiTeamsIdRouteImport } from './routes/api.teams.$id'
-import { Route as ApiProfileCarbonAgeRouteImport } from './routes/api.profile.carbon-age'
-import { Route as ApiPlaidSyncTransactionsRouteImport } from './routes/api.plaid.sync-transactions'
-import { Route as ApiPlaidExchangeTokenRouteImport } from './routes/api.plaid.exchange-token'
-import { Route as ApiPlaidCreateLinkTokenRouteImport } from './routes/api.plaid.create-link-token'
-import { Route as ApiOnboardingQuizRouteImport } from './routes/api.onboarding.quiz'
-import { Route as ApiOnboardingCompleteRouteImport } from './routes/api.onboarding.complete'
-import { Route as ApiImpactTotalRouteImport } from './routes/api.impact.total'
-import { Route as ApiImpactEquivalenciesRouteImport } from './routes/api.impact.equivalencies'
-import { Route as ApiCopilotSuggestionsRouteImport } from './routes/api.copilot.suggestions'
-import { Route as ApiCopilotHistoryRouteImport } from './routes/api.copilot.history'
-import { Route as ApiCopilotChatRouteImport } from './routes/api.copilot.chat'
-import { Route as ApiChallengesTodayRouteImport } from './routes/api.challenges.today'
-import { Route as ApiChallengesLibraryRouteImport } from './routes/api.challenges.library'
-import { Route as ApiChallengesHistoryRouteImport } from './routes/api.challenges.history'
-import { Route as ApiCarbonTrendsRouteImport } from './routes/api.carbon.trends'
-import { Route as ApiCarbonTransactionsRouteImport } from './routes/api.carbon.transactions'
-import { Route as ApiCarbonDashboardRouteImport } from './routes/api.carbon.dashboard'
-import { Route as ApiCarbonCompareRouteImport } from './routes/api.carbon.compare'
-import { Route as ApiTeamsJoinInviteCodeRouteImport } from './routes/api.teams.join.$inviteCode'
-import { Route as ApiTeamsIdLeaderboardRouteImport } from './routes/api.teams.$id.leaderboard'
-import { Route as ApiPlaidDisconnectIdRouteImport } from './routes/api.plaid.disconnect.$id'
-import { Route as ApiChallengesIdActionRouteImport } from './routes/api.challenges.$id.$action'
 
 const TransactionsRoute = TransactionsRouteImport.update({
   id: '/transactions',
@@ -129,152 +100,6 @@ const AuthCallbackRoute = AuthCallbackRouteImport.update({
   path: '/auth/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiStreaksRoute = ApiStreaksRouteImport.update({
-  id: '/api/streaks',
-  path: '/api/streaks',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiProfileRoute = ApiProfileRouteImport.update({
-  id: '/api/profile',
-  path: '/api/profile',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiLevelRoute = ApiLevelRouteImport.update({
-  id: '/api/level',
-  path: '/api/level',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiAchievementsRoute = ApiAchievementsRouteImport.update({
-  id: '/api/achievements',
-  path: '/api/achievements',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiTeamsMyTeamsRoute = ApiTeamsMyTeamsRouteImport.update({
-  id: '/api/teams/my-teams',
-  path: '/api/teams/my-teams',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiTeamsCreateRoute = ApiTeamsCreateRouteImport.update({
-  id: '/api/teams/create',
-  path: '/api/teams/create',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiTeamsIdRoute = ApiTeamsIdRouteImport.update({
-  id: '/api/teams/$id',
-  path: '/api/teams/$id',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiProfileCarbonAgeRoute = ApiProfileCarbonAgeRouteImport.update({
-  id: '/carbon-age',
-  path: '/carbon-age',
-  getParentRoute: () => ApiProfileRoute,
-} as any)
-const ApiPlaidSyncTransactionsRoute =
-  ApiPlaidSyncTransactionsRouteImport.update({
-    id: '/api/plaid/sync-transactions',
-    path: '/api/plaid/sync-transactions',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const ApiPlaidExchangeTokenRoute = ApiPlaidExchangeTokenRouteImport.update({
-  id: '/api/plaid/exchange-token',
-  path: '/api/plaid/exchange-token',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiPlaidCreateLinkTokenRoute = ApiPlaidCreateLinkTokenRouteImport.update({
-  id: '/api/plaid/create-link-token',
-  path: '/api/plaid/create-link-token',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiOnboardingQuizRoute = ApiOnboardingQuizRouteImport.update({
-  id: '/api/onboarding/quiz',
-  path: '/api/onboarding/quiz',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiOnboardingCompleteRoute = ApiOnboardingCompleteRouteImport.update({
-  id: '/api/onboarding/complete',
-  path: '/api/onboarding/complete',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiImpactTotalRoute = ApiImpactTotalRouteImport.update({
-  id: '/api/impact/total',
-  path: '/api/impact/total',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiImpactEquivalenciesRoute = ApiImpactEquivalenciesRouteImport.update({
-  id: '/api/impact/equivalencies',
-  path: '/api/impact/equivalencies',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiCopilotSuggestionsRoute = ApiCopilotSuggestionsRouteImport.update({
-  id: '/api/copilot/suggestions',
-  path: '/api/copilot/suggestions',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiCopilotHistoryRoute = ApiCopilotHistoryRouteImport.update({
-  id: '/api/copilot/history',
-  path: '/api/copilot/history',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiCopilotChatRoute = ApiCopilotChatRouteImport.update({
-  id: '/api/copilot/chat',
-  path: '/api/copilot/chat',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiChallengesTodayRoute = ApiChallengesTodayRouteImport.update({
-  id: '/api/challenges/today',
-  path: '/api/challenges/today',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiChallengesLibraryRoute = ApiChallengesLibraryRouteImport.update({
-  id: '/api/challenges/library',
-  path: '/api/challenges/library',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiChallengesHistoryRoute = ApiChallengesHistoryRouteImport.update({
-  id: '/api/challenges/history',
-  path: '/api/challenges/history',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiCarbonTrendsRoute = ApiCarbonTrendsRouteImport.update({
-  id: '/api/carbon/trends',
-  path: '/api/carbon/trends',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiCarbonTransactionsRoute = ApiCarbonTransactionsRouteImport.update({
-  id: '/api/carbon/transactions',
-  path: '/api/carbon/transactions',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiCarbonDashboardRoute = ApiCarbonDashboardRouteImport.update({
-  id: '/api/carbon/dashboard',
-  path: '/api/carbon/dashboard',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiCarbonCompareRoute = ApiCarbonCompareRouteImport.update({
-  id: '/api/carbon/compare',
-  path: '/api/carbon/compare',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiTeamsJoinInviteCodeRoute = ApiTeamsJoinInviteCodeRouteImport.update({
-  id: '/api/teams/join/$inviteCode',
-  path: '/api/teams/join/$inviteCode',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiTeamsIdLeaderboardRoute = ApiTeamsIdLeaderboardRouteImport.update({
-  id: '/leaderboard',
-  path: '/leaderboard',
-  getParentRoute: () => ApiTeamsIdRoute,
-} as any)
-const ApiPlaidDisconnectIdRoute = ApiPlaidDisconnectIdRouteImport.update({
-  id: '/api/plaid/disconnect/$id',
-  path: '/api/plaid/disconnect/$id',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiChallengesIdActionRoute = ApiChallengesIdActionRouteImport.update({
-  id: '/api/challenges/$id/$action',
-  path: '/api/challenges/$id/$action',
-  getParentRoute: () => rootRouteImport,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -290,37 +115,8 @@ export interface FileRoutesByFullPath {
   '/success': typeof SuccessRoute
   '/teams': typeof TeamsRouteWithChildren
   '/transactions': typeof TransactionsRoute
-  '/api/achievements': typeof ApiAchievementsRoute
-  '/api/level': typeof ApiLevelRoute
-  '/api/profile': typeof ApiProfileRouteWithChildren
-  '/api/streaks': typeof ApiStreaksRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/teams/$id': typeof TeamsIdRoute
-  '/api/carbon/compare': typeof ApiCarbonCompareRoute
-  '/api/carbon/dashboard': typeof ApiCarbonDashboardRoute
-  '/api/carbon/transactions': typeof ApiCarbonTransactionsRoute
-  '/api/carbon/trends': typeof ApiCarbonTrendsRoute
-  '/api/challenges/history': typeof ApiChallengesHistoryRoute
-  '/api/challenges/library': typeof ApiChallengesLibraryRoute
-  '/api/challenges/today': typeof ApiChallengesTodayRoute
-  '/api/copilot/chat': typeof ApiCopilotChatRoute
-  '/api/copilot/history': typeof ApiCopilotHistoryRoute
-  '/api/copilot/suggestions': typeof ApiCopilotSuggestionsRoute
-  '/api/impact/equivalencies': typeof ApiImpactEquivalenciesRoute
-  '/api/impact/total': typeof ApiImpactTotalRoute
-  '/api/onboarding/complete': typeof ApiOnboardingCompleteRoute
-  '/api/onboarding/quiz': typeof ApiOnboardingQuizRoute
-  '/api/plaid/create-link-token': typeof ApiPlaidCreateLinkTokenRoute
-  '/api/plaid/exchange-token': typeof ApiPlaidExchangeTokenRoute
-  '/api/plaid/sync-transactions': typeof ApiPlaidSyncTransactionsRoute
-  '/api/profile/carbon-age': typeof ApiProfileCarbonAgeRoute
-  '/api/teams/$id': typeof ApiTeamsIdRouteWithChildren
-  '/api/teams/create': typeof ApiTeamsCreateRoute
-  '/api/teams/my-teams': typeof ApiTeamsMyTeamsRoute
-  '/api/challenges/$id/$action': typeof ApiChallengesIdActionRoute
-  '/api/plaid/disconnect/$id': typeof ApiPlaidDisconnectIdRoute
-  '/api/teams/$id/leaderboard': typeof ApiTeamsIdLeaderboardRoute
-  '/api/teams/join/$inviteCode': typeof ApiTeamsJoinInviteCodeRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -336,37 +132,8 @@ export interface FileRoutesByTo {
   '/success': typeof SuccessRoute
   '/teams': typeof TeamsRouteWithChildren
   '/transactions': typeof TransactionsRoute
-  '/api/achievements': typeof ApiAchievementsRoute
-  '/api/level': typeof ApiLevelRoute
-  '/api/profile': typeof ApiProfileRouteWithChildren
-  '/api/streaks': typeof ApiStreaksRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/teams/$id': typeof TeamsIdRoute
-  '/api/carbon/compare': typeof ApiCarbonCompareRoute
-  '/api/carbon/dashboard': typeof ApiCarbonDashboardRoute
-  '/api/carbon/transactions': typeof ApiCarbonTransactionsRoute
-  '/api/carbon/trends': typeof ApiCarbonTrendsRoute
-  '/api/challenges/history': typeof ApiChallengesHistoryRoute
-  '/api/challenges/library': typeof ApiChallengesLibraryRoute
-  '/api/challenges/today': typeof ApiChallengesTodayRoute
-  '/api/copilot/chat': typeof ApiCopilotChatRoute
-  '/api/copilot/history': typeof ApiCopilotHistoryRoute
-  '/api/copilot/suggestions': typeof ApiCopilotSuggestionsRoute
-  '/api/impact/equivalencies': typeof ApiImpactEquivalenciesRoute
-  '/api/impact/total': typeof ApiImpactTotalRoute
-  '/api/onboarding/complete': typeof ApiOnboardingCompleteRoute
-  '/api/onboarding/quiz': typeof ApiOnboardingQuizRoute
-  '/api/plaid/create-link-token': typeof ApiPlaidCreateLinkTokenRoute
-  '/api/plaid/exchange-token': typeof ApiPlaidExchangeTokenRoute
-  '/api/plaid/sync-transactions': typeof ApiPlaidSyncTransactionsRoute
-  '/api/profile/carbon-age': typeof ApiProfileCarbonAgeRoute
-  '/api/teams/$id': typeof ApiTeamsIdRouteWithChildren
-  '/api/teams/create': typeof ApiTeamsCreateRoute
-  '/api/teams/my-teams': typeof ApiTeamsMyTeamsRoute
-  '/api/challenges/$id/$action': typeof ApiChallengesIdActionRoute
-  '/api/plaid/disconnect/$id': typeof ApiPlaidDisconnectIdRoute
-  '/api/teams/$id/leaderboard': typeof ApiTeamsIdLeaderboardRoute
-  '/api/teams/join/$inviteCode': typeof ApiTeamsJoinInviteCodeRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -383,37 +150,8 @@ export interface FileRoutesById {
   '/success': typeof SuccessRoute
   '/teams': typeof TeamsRouteWithChildren
   '/transactions': typeof TransactionsRoute
-  '/api/achievements': typeof ApiAchievementsRoute
-  '/api/level': typeof ApiLevelRoute
-  '/api/profile': typeof ApiProfileRouteWithChildren
-  '/api/streaks': typeof ApiStreaksRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/teams/$id': typeof TeamsIdRoute
-  '/api/carbon/compare': typeof ApiCarbonCompareRoute
-  '/api/carbon/dashboard': typeof ApiCarbonDashboardRoute
-  '/api/carbon/transactions': typeof ApiCarbonTransactionsRoute
-  '/api/carbon/trends': typeof ApiCarbonTrendsRoute
-  '/api/challenges/history': typeof ApiChallengesHistoryRoute
-  '/api/challenges/library': typeof ApiChallengesLibraryRoute
-  '/api/challenges/today': typeof ApiChallengesTodayRoute
-  '/api/copilot/chat': typeof ApiCopilotChatRoute
-  '/api/copilot/history': typeof ApiCopilotHistoryRoute
-  '/api/copilot/suggestions': typeof ApiCopilotSuggestionsRoute
-  '/api/impact/equivalencies': typeof ApiImpactEquivalenciesRoute
-  '/api/impact/total': typeof ApiImpactTotalRoute
-  '/api/onboarding/complete': typeof ApiOnboardingCompleteRoute
-  '/api/onboarding/quiz': typeof ApiOnboardingQuizRoute
-  '/api/plaid/create-link-token': typeof ApiPlaidCreateLinkTokenRoute
-  '/api/plaid/exchange-token': typeof ApiPlaidExchangeTokenRoute
-  '/api/plaid/sync-transactions': typeof ApiPlaidSyncTransactionsRoute
-  '/api/profile/carbon-age': typeof ApiProfileCarbonAgeRoute
-  '/api/teams/$id': typeof ApiTeamsIdRouteWithChildren
-  '/api/teams/create': typeof ApiTeamsCreateRoute
-  '/api/teams/my-teams': typeof ApiTeamsMyTeamsRoute
-  '/api/challenges/$id/$action': typeof ApiChallengesIdActionRoute
-  '/api/plaid/disconnect/$id': typeof ApiPlaidDisconnectIdRoute
-  '/api/teams/$id/leaderboard': typeof ApiTeamsIdLeaderboardRoute
-  '/api/teams/join/$inviteCode': typeof ApiTeamsJoinInviteCodeRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -431,37 +169,8 @@ export interface FileRouteTypes {
     | '/success'
     | '/teams'
     | '/transactions'
-    | '/api/achievements'
-    | '/api/level'
-    | '/api/profile'
-    | '/api/streaks'
     | '/auth/callback'
     | '/teams/$id'
-    | '/api/carbon/compare'
-    | '/api/carbon/dashboard'
-    | '/api/carbon/transactions'
-    | '/api/carbon/trends'
-    | '/api/challenges/history'
-    | '/api/challenges/library'
-    | '/api/challenges/today'
-    | '/api/copilot/chat'
-    | '/api/copilot/history'
-    | '/api/copilot/suggestions'
-    | '/api/impact/equivalencies'
-    | '/api/impact/total'
-    | '/api/onboarding/complete'
-    | '/api/onboarding/quiz'
-    | '/api/plaid/create-link-token'
-    | '/api/plaid/exchange-token'
-    | '/api/plaid/sync-transactions'
-    | '/api/profile/carbon-age'
-    | '/api/teams/$id'
-    | '/api/teams/create'
-    | '/api/teams/my-teams'
-    | '/api/challenges/$id/$action'
-    | '/api/plaid/disconnect/$id'
-    | '/api/teams/$id/leaderboard'
-    | '/api/teams/join/$inviteCode'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -477,37 +186,8 @@ export interface FileRouteTypes {
     | '/success'
     | '/teams'
     | '/transactions'
-    | '/api/achievements'
-    | '/api/level'
-    | '/api/profile'
-    | '/api/streaks'
     | '/auth/callback'
     | '/teams/$id'
-    | '/api/carbon/compare'
-    | '/api/carbon/dashboard'
-    | '/api/carbon/transactions'
-    | '/api/carbon/trends'
-    | '/api/challenges/history'
-    | '/api/challenges/library'
-    | '/api/challenges/today'
-    | '/api/copilot/chat'
-    | '/api/copilot/history'
-    | '/api/copilot/suggestions'
-    | '/api/impact/equivalencies'
-    | '/api/impact/total'
-    | '/api/onboarding/complete'
-    | '/api/onboarding/quiz'
-    | '/api/plaid/create-link-token'
-    | '/api/plaid/exchange-token'
-    | '/api/plaid/sync-transactions'
-    | '/api/profile/carbon-age'
-    | '/api/teams/$id'
-    | '/api/teams/create'
-    | '/api/teams/my-teams'
-    | '/api/challenges/$id/$action'
-    | '/api/plaid/disconnect/$id'
-    | '/api/teams/$id/leaderboard'
-    | '/api/teams/join/$inviteCode'
   id:
     | '__root__'
     | '/'
@@ -523,37 +203,8 @@ export interface FileRouteTypes {
     | '/success'
     | '/teams'
     | '/transactions'
-    | '/api/achievements'
-    | '/api/level'
-    | '/api/profile'
-    | '/api/streaks'
     | '/auth/callback'
     | '/teams/$id'
-    | '/api/carbon/compare'
-    | '/api/carbon/dashboard'
-    | '/api/carbon/transactions'
-    | '/api/carbon/trends'
-    | '/api/challenges/history'
-    | '/api/challenges/library'
-    | '/api/challenges/today'
-    | '/api/copilot/chat'
-    | '/api/copilot/history'
-    | '/api/copilot/suggestions'
-    | '/api/impact/equivalencies'
-    | '/api/impact/total'
-    | '/api/onboarding/complete'
-    | '/api/onboarding/quiz'
-    | '/api/plaid/create-link-token'
-    | '/api/plaid/exchange-token'
-    | '/api/plaid/sync-transactions'
-    | '/api/profile/carbon-age'
-    | '/api/teams/$id'
-    | '/api/teams/create'
-    | '/api/teams/my-teams'
-    | '/api/challenges/$id/$action'
-    | '/api/plaid/disconnect/$id'
-    | '/api/teams/$id/leaderboard'
-    | '/api/teams/join/$inviteCode'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -570,34 +221,7 @@ export interface RootRouteChildren {
   SuccessRoute: typeof SuccessRoute
   TeamsRoute: typeof TeamsRouteWithChildren
   TransactionsRoute: typeof TransactionsRoute
-  ApiAchievementsRoute: typeof ApiAchievementsRoute
-  ApiLevelRoute: typeof ApiLevelRoute
-  ApiProfileRoute: typeof ApiProfileRouteWithChildren
-  ApiStreaksRoute: typeof ApiStreaksRoute
   AuthCallbackRoute: typeof AuthCallbackRoute
-  ApiCarbonCompareRoute: typeof ApiCarbonCompareRoute
-  ApiCarbonDashboardRoute: typeof ApiCarbonDashboardRoute
-  ApiCarbonTransactionsRoute: typeof ApiCarbonTransactionsRoute
-  ApiCarbonTrendsRoute: typeof ApiCarbonTrendsRoute
-  ApiChallengesHistoryRoute: typeof ApiChallengesHistoryRoute
-  ApiChallengesLibraryRoute: typeof ApiChallengesLibraryRoute
-  ApiChallengesTodayRoute: typeof ApiChallengesTodayRoute
-  ApiCopilotChatRoute: typeof ApiCopilotChatRoute
-  ApiCopilotHistoryRoute: typeof ApiCopilotHistoryRoute
-  ApiCopilotSuggestionsRoute: typeof ApiCopilotSuggestionsRoute
-  ApiImpactEquivalenciesRoute: typeof ApiImpactEquivalenciesRoute
-  ApiImpactTotalRoute: typeof ApiImpactTotalRoute
-  ApiOnboardingCompleteRoute: typeof ApiOnboardingCompleteRoute
-  ApiOnboardingQuizRoute: typeof ApiOnboardingQuizRoute
-  ApiPlaidCreateLinkTokenRoute: typeof ApiPlaidCreateLinkTokenRoute
-  ApiPlaidExchangeTokenRoute: typeof ApiPlaidExchangeTokenRoute
-  ApiPlaidSyncTransactionsRoute: typeof ApiPlaidSyncTransactionsRoute
-  ApiTeamsIdRoute: typeof ApiTeamsIdRouteWithChildren
-  ApiTeamsCreateRoute: typeof ApiTeamsCreateRoute
-  ApiTeamsMyTeamsRoute: typeof ApiTeamsMyTeamsRoute
-  ApiChallengesIdActionRoute: typeof ApiChallengesIdActionRoute
-  ApiPlaidDisconnectIdRoute: typeof ApiPlaidDisconnectIdRoute
-  ApiTeamsJoinInviteCodeRoute: typeof ApiTeamsJoinInviteCodeRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -707,209 +331,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/streaks': {
-      id: '/api/streaks'
-      path: '/api/streaks'
-      fullPath: '/api/streaks'
-      preLoaderRoute: typeof ApiStreaksRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/profile': {
-      id: '/api/profile'
-      path: '/api/profile'
-      fullPath: '/api/profile'
-      preLoaderRoute: typeof ApiProfileRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/level': {
-      id: '/api/level'
-      path: '/api/level'
-      fullPath: '/api/level'
-      preLoaderRoute: typeof ApiLevelRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/achievements': {
-      id: '/api/achievements'
-      path: '/api/achievements'
-      fullPath: '/api/achievements'
-      preLoaderRoute: typeof ApiAchievementsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/teams/my-teams': {
-      id: '/api/teams/my-teams'
-      path: '/api/teams/my-teams'
-      fullPath: '/api/teams/my-teams'
-      preLoaderRoute: typeof ApiTeamsMyTeamsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/teams/create': {
-      id: '/api/teams/create'
-      path: '/api/teams/create'
-      fullPath: '/api/teams/create'
-      preLoaderRoute: typeof ApiTeamsCreateRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/teams/$id': {
-      id: '/api/teams/$id'
-      path: '/api/teams/$id'
-      fullPath: '/api/teams/$id'
-      preLoaderRoute: typeof ApiTeamsIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/profile/carbon-age': {
-      id: '/api/profile/carbon-age'
-      path: '/carbon-age'
-      fullPath: '/api/profile/carbon-age'
-      preLoaderRoute: typeof ApiProfileCarbonAgeRouteImport
-      parentRoute: typeof ApiProfileRoute
-    }
-    '/api/plaid/sync-transactions': {
-      id: '/api/plaid/sync-transactions'
-      path: '/api/plaid/sync-transactions'
-      fullPath: '/api/plaid/sync-transactions'
-      preLoaderRoute: typeof ApiPlaidSyncTransactionsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/plaid/exchange-token': {
-      id: '/api/plaid/exchange-token'
-      path: '/api/plaid/exchange-token'
-      fullPath: '/api/plaid/exchange-token'
-      preLoaderRoute: typeof ApiPlaidExchangeTokenRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/plaid/create-link-token': {
-      id: '/api/plaid/create-link-token'
-      path: '/api/plaid/create-link-token'
-      fullPath: '/api/plaid/create-link-token'
-      preLoaderRoute: typeof ApiPlaidCreateLinkTokenRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/onboarding/quiz': {
-      id: '/api/onboarding/quiz'
-      path: '/api/onboarding/quiz'
-      fullPath: '/api/onboarding/quiz'
-      preLoaderRoute: typeof ApiOnboardingQuizRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/onboarding/complete': {
-      id: '/api/onboarding/complete'
-      path: '/api/onboarding/complete'
-      fullPath: '/api/onboarding/complete'
-      preLoaderRoute: typeof ApiOnboardingCompleteRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/impact/total': {
-      id: '/api/impact/total'
-      path: '/api/impact/total'
-      fullPath: '/api/impact/total'
-      preLoaderRoute: typeof ApiImpactTotalRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/impact/equivalencies': {
-      id: '/api/impact/equivalencies'
-      path: '/api/impact/equivalencies'
-      fullPath: '/api/impact/equivalencies'
-      preLoaderRoute: typeof ApiImpactEquivalenciesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/copilot/suggestions': {
-      id: '/api/copilot/suggestions'
-      path: '/api/copilot/suggestions'
-      fullPath: '/api/copilot/suggestions'
-      preLoaderRoute: typeof ApiCopilotSuggestionsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/copilot/history': {
-      id: '/api/copilot/history'
-      path: '/api/copilot/history'
-      fullPath: '/api/copilot/history'
-      preLoaderRoute: typeof ApiCopilotHistoryRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/copilot/chat': {
-      id: '/api/copilot/chat'
-      path: '/api/copilot/chat'
-      fullPath: '/api/copilot/chat'
-      preLoaderRoute: typeof ApiCopilotChatRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/challenges/today': {
-      id: '/api/challenges/today'
-      path: '/api/challenges/today'
-      fullPath: '/api/challenges/today'
-      preLoaderRoute: typeof ApiChallengesTodayRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/challenges/library': {
-      id: '/api/challenges/library'
-      path: '/api/challenges/library'
-      fullPath: '/api/challenges/library'
-      preLoaderRoute: typeof ApiChallengesLibraryRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/challenges/history': {
-      id: '/api/challenges/history'
-      path: '/api/challenges/history'
-      fullPath: '/api/challenges/history'
-      preLoaderRoute: typeof ApiChallengesHistoryRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/carbon/trends': {
-      id: '/api/carbon/trends'
-      path: '/api/carbon/trends'
-      fullPath: '/api/carbon/trends'
-      preLoaderRoute: typeof ApiCarbonTrendsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/carbon/transactions': {
-      id: '/api/carbon/transactions'
-      path: '/api/carbon/transactions'
-      fullPath: '/api/carbon/transactions'
-      preLoaderRoute: typeof ApiCarbonTransactionsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/carbon/dashboard': {
-      id: '/api/carbon/dashboard'
-      path: '/api/carbon/dashboard'
-      fullPath: '/api/carbon/dashboard'
-      preLoaderRoute: typeof ApiCarbonDashboardRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/carbon/compare': {
-      id: '/api/carbon/compare'
-      path: '/api/carbon/compare'
-      fullPath: '/api/carbon/compare'
-      preLoaderRoute: typeof ApiCarbonCompareRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/teams/join/$inviteCode': {
-      id: '/api/teams/join/$inviteCode'
-      path: '/api/teams/join/$inviteCode'
-      fullPath: '/api/teams/join/$inviteCode'
-      preLoaderRoute: typeof ApiTeamsJoinInviteCodeRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/teams/$id/leaderboard': {
-      id: '/api/teams/$id/leaderboard'
-      path: '/leaderboard'
-      fullPath: '/api/teams/$id/leaderboard'
-      preLoaderRoute: typeof ApiTeamsIdLeaderboardRouteImport
-      parentRoute: typeof ApiTeamsIdRoute
-    }
-    '/api/plaid/disconnect/$id': {
-      id: '/api/plaid/disconnect/$id'
-      path: '/api/plaid/disconnect/$id'
-      fullPath: '/api/plaid/disconnect/$id'
-      preLoaderRoute: typeof ApiPlaidDisconnectIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/challenges/$id/$action': {
-      id: '/api/challenges/$id/$action'
-      path: '/api/challenges/$id/$action'
-      fullPath: '/api/challenges/$id/$action'
-      preLoaderRoute: typeof ApiChallengesIdActionRouteImport
-      parentRoute: typeof rootRouteImport
-    }
   }
 }
 
@@ -922,30 +343,6 @@ const TeamsRouteChildren: TeamsRouteChildren = {
 }
 
 const TeamsRouteWithChildren = TeamsRoute._addFileChildren(TeamsRouteChildren)
-
-interface ApiProfileRouteChildren {
-  ApiProfileCarbonAgeRoute: typeof ApiProfileCarbonAgeRoute
-}
-
-const ApiProfileRouteChildren: ApiProfileRouteChildren = {
-  ApiProfileCarbonAgeRoute: ApiProfileCarbonAgeRoute,
-}
-
-const ApiProfileRouteWithChildren = ApiProfileRoute._addFileChildren(
-  ApiProfileRouteChildren,
-)
-
-interface ApiTeamsIdRouteChildren {
-  ApiTeamsIdLeaderboardRoute: typeof ApiTeamsIdLeaderboardRoute
-}
-
-const ApiTeamsIdRouteChildren: ApiTeamsIdRouteChildren = {
-  ApiTeamsIdLeaderboardRoute: ApiTeamsIdLeaderboardRoute,
-}
-
-const ApiTeamsIdRouteWithChildren = ApiTeamsIdRoute._addFileChildren(
-  ApiTeamsIdRouteChildren,
-)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
@@ -961,34 +358,7 @@ const rootRouteChildren: RootRouteChildren = {
   SuccessRoute: SuccessRoute,
   TeamsRoute: TeamsRouteWithChildren,
   TransactionsRoute: TransactionsRoute,
-  ApiAchievementsRoute: ApiAchievementsRoute,
-  ApiLevelRoute: ApiLevelRoute,
-  ApiProfileRoute: ApiProfileRouteWithChildren,
-  ApiStreaksRoute: ApiStreaksRoute,
   AuthCallbackRoute: AuthCallbackRoute,
-  ApiCarbonCompareRoute: ApiCarbonCompareRoute,
-  ApiCarbonDashboardRoute: ApiCarbonDashboardRoute,
-  ApiCarbonTransactionsRoute: ApiCarbonTransactionsRoute,
-  ApiCarbonTrendsRoute: ApiCarbonTrendsRoute,
-  ApiChallengesHistoryRoute: ApiChallengesHistoryRoute,
-  ApiChallengesLibraryRoute: ApiChallengesLibraryRoute,
-  ApiChallengesTodayRoute: ApiChallengesTodayRoute,
-  ApiCopilotChatRoute: ApiCopilotChatRoute,
-  ApiCopilotHistoryRoute: ApiCopilotHistoryRoute,
-  ApiCopilotSuggestionsRoute: ApiCopilotSuggestionsRoute,
-  ApiImpactEquivalenciesRoute: ApiImpactEquivalenciesRoute,
-  ApiImpactTotalRoute: ApiImpactTotalRoute,
-  ApiOnboardingCompleteRoute: ApiOnboardingCompleteRoute,
-  ApiOnboardingQuizRoute: ApiOnboardingQuizRoute,
-  ApiPlaidCreateLinkTokenRoute: ApiPlaidCreateLinkTokenRoute,
-  ApiPlaidExchangeTokenRoute: ApiPlaidExchangeTokenRoute,
-  ApiPlaidSyncTransactionsRoute: ApiPlaidSyncTransactionsRoute,
-  ApiTeamsIdRoute: ApiTeamsIdRouteWithChildren,
-  ApiTeamsCreateRoute: ApiTeamsCreateRoute,
-  ApiTeamsMyTeamsRoute: ApiTeamsMyTeamsRoute,
-  ApiChallengesIdActionRoute: ApiChallengesIdActionRoute,
-  ApiPlaidDisconnectIdRoute: ApiPlaidDisconnectIdRoute,
-  ApiTeamsJoinInviteCodeRoute: ApiTeamsJoinInviteCodeRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

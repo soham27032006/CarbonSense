@@ -1,5 +1,5 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useMotionValue, useTransform, animate } from "framer-motion";
 import {
   ArrowDownRight,
@@ -23,7 +23,9 @@ import {
 import { useUnits } from "@/contexts/UnitsContext";
 import { useAuthStore } from "@/stores/authStore";
 import { useCopilot } from "@/components/copilot/CopilotProvider";
+import { StickyHeader } from "@/components/StickyHeader";
 import { formatCO2, type UnitSystem } from "@/utils/units";
+import { CATEGORY_META, getGreetingForHour } from "@/lib/homeDisplay";
 
 export const Route = createFileRoute("/home")({
   ssr: false,
@@ -54,9 +56,12 @@ interface Dashboard {
   };
   ai_insight: string;
 }
-
 interface Challenge {
   id: string;
+  assignment?: {
+    id: string;
+    status: Exclude<ChallengeStatus, null>;
+  };
   category: Category;
   emoji: string;
   title: string;
@@ -66,44 +71,6 @@ interface Challenge {
   difficulty: "Easy" | "Medium" | "Hard";
   participants_today: number;
 }
-
-const EMPTY_BREAKDOWN: Record<Category, number> = {
-  food: 0,
-  transport: 0,
-  home: 0,
-  shopping: 0,
-  travel: 0,
-  other: 0,
-};
-
-const DEFAULT_DASHBOARD: Dashboard = {
-  carbon_age: 0,
-  current_level: { level: 1, name: "Carbon Curious", xp: 0, xp_to_next: 100 },
-  streak: { current: 0, max: 0, freeze_available: 0 },
-  today: { carbon_kg: 0, challenge_status: null },
-  this_week: {
-    total_carbon_kg: 0,
-    vs_last_week_percent: 0,
-    category_breakdown: EMPTY_BREAKDOWN,
-    is_estimated: false,
-  },
-  this_month: {
-    total_carbon_kg: 0,
-    vs_last_month_percent: 0,
-    daily_average_kg: 0,
-    is_estimated: false,
-  },
-  ai_insight: "You're all set. Connect a bank or complete a challenge to start getting personalized insight.",
-};
-
-const CATEGORY_META: Record<Category, { emoji: string; label: string; color: string }> = {
-  food: { emoji: "🍔", label: "Food", color: "from-amber-300 to-orange-400" },
-  transport: { emoji: "🚗", label: "Transport", color: "from-sky-300 to-blue-500" },
-  home: { emoji: "🏠", label: "Home", color: "from-emerald-300 to-teal-400" },
-  shopping: { emoji: "🛍", label: "Shopping", color: "from-fuchsia-300 to-pink-500" },
-  travel: { emoji: "✈️", label: "Travel", color: "from-violet-300 to-indigo-500" },
-  other: { emoji: "○", label: "Other", color: "from-slate-300 to-slate-500" },
-};
 
 function pluralUnit(count: number, singular: string, plural = `${singular}s`) {
   return Math.abs(count) === 1 ? singular : plural;
@@ -120,7 +87,8 @@ function getApiErrorMessage(error: unknown, fallback: string) {
 }
 
 function getLevelTarget(level: Dashboard["current_level"]) {
-  return level.xp_to_next > 0 ? level.xp + level.xp_to_next : Math.max(level.xp, 1);
+  if (level.xp_to_next <= 0) return level.xp > 0 ? level.xp : 1;
+  return level.xp + level.xp_to_next;
 }
 
 // ---------- page ----------
@@ -143,7 +111,6 @@ function HomePage() {
   const acceptMutation = useAcceptChallenge();
   const completeMutation = useCompleteChallenge();
   const skipMutation = useSkipChallenge();
-  const resolvedDashboard = dashboard ?? DEFAULT_DASHBOARD;
 
   const load = async () => {
     await Promise.all([dashboardQuery.refetch(), challengeQuery.refetch()]);
@@ -165,7 +132,7 @@ function HomePage() {
 
   useEffect(() => {
     if (dashboardQuery.isError || challengeQuery.isError) {
-      toast.error("Couldn't load your dashboard.");
+      toast.error("Couldn't load your dashboard.", { id: "home-load-error" });
     }
   }, [dashboardQuery.isError, challengeQuery.isError]);
 
@@ -173,13 +140,20 @@ function HomePage() {
 
   const accept = async () => {
     if (!challenge) return;
+    const assignmentId = challenge.assignment?.id;
+    if (!assignmentId) {
+      toast.error("Refresh to continue.", { id: "home-assignment-missing" });
+      return;
+    }
     setBusy(true);
     try {
-      await acceptMutation.mutateAsync(challenge.id);
+      await acceptMutation.mutateAsync(assignmentId);
       setStatus("accepted");
       toast.success("Challenge accepted. Go get it.");
     } catch (error) {
-      toast.error(getApiErrorMessage(error, "Couldn't accept. Refresh and try again."));
+      toast.error(getApiErrorMessage(error, "Couldn't accept. Refresh and try again."), {
+        id: "home-accept-error",
+      });
     } finally {
       setBusy(false);
     }
@@ -187,28 +161,39 @@ function HomePage() {
 
   const complete = async () => {
     if (!challenge) return;
+    const assignmentId = challenge.assignment?.id;
+    if (!assignmentId) {
+      toast.error("Refresh to continue.", { id: "home-assignment-missing" });
+      return;
+    }
     setBusy(true);
     try {
-      const result = await completeMutation.mutateAsync(challenge.id);
+      const result = await completeMutation.mutateAsync(assignmentId);
       const xpEarned = Number(result?.xp_earned ?? challenge.xp_reward);
       setStatus("completed");
       setConfetti(true);
       toast.success(`Challenge complete! +${xpEarned} XP`);
-      setDashboard((d) =>
-        d
-          ? {
-              ...d,
-              streak: { ...d.streak, current: d.streak.current + 1 },
-              current_level: {
-                ...d.current_level,
-                xp: d.current_level.xp + xpEarned,
-              },
-            }
-          : d,
-      );
+      setDashboard((d) => {
+        if (!d) return d;
+        const newStreak = d.streak.current + 1;
+        return {
+          ...d,
+          streak: {
+            ...d.streak,
+            current: newStreak,
+            max: Math.max(d.streak.max, newStreak),
+          },
+          current_level: {
+            ...d.current_level,
+            xp: d.current_level.xp + xpEarned,
+          },
+        };
+      });
       setTimeout(() => setConfetti(false), 2200);
     } catch (error) {
-      toast.error(getApiErrorMessage(error, "Couldn't complete the challenge. Try again."));
+      toast.error(getApiErrorMessage(error, "Couldn't complete the challenge. Try again."), {
+        id: "home-complete-error",
+      });
     } finally {
       setBusy(false);
     }
@@ -216,35 +201,48 @@ function HomePage() {
 
   const skip = async (reason: string) => {
     if (!challenge) return;
+    const assignmentId = challenge.assignment?.id;
+    if (!assignmentId) {
+      setSkipOpen(false);
+      toast.error("Refresh to continue.", { id: "home-assignment-missing" });
+      return;
+    }
     setSkipOpen(false);
     setBusy(true);
     try {
-      await skipMutation.mutateAsync({ id: challenge.id, reason: reason || "Skipped by user" });
+      await skipMutation.mutateAsync({
+        id: assignmentId,
+        reason: reason || "Skipped by user",
+      });
       toast.success("Got it. Here's another challenge.");
       await load();
     } catch (error) {
-      toast.error(getApiErrorMessage(error, "Couldn't skip. Refresh and try again."));
+      toast.error(getApiErrorMessage(error, "Couldn't skip. Refresh and try again."), {
+        id: "home-skip-error",
+      });
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <main className="relative min-h-screen overflow-x-hidden bg-background text-foreground">
+    <main className="relative overflow-x-hidden bg-background text-foreground">
       <Ambient />
-      <StickyHeader streak={dashboard?.streak.current ?? 0} avatarName={firstName} />
+      <StickyHeader streak={dashboard?.streak.current} avatarName={firstName} />
 
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        className="relative z-10 mx-auto w-full max-w-2xl px-5 pb-28 pt-6 sm:px-8"
+        className="relative z-10 mx-auto w-full max-w-2xl px-5 pb-28 sm:px-8"
       >
         {loading ? (
           <DashboardSkeleton />
+        ) : !dashboard ? (
+          <HomeLoadError onRetry={load} />
         ) : (
           <>
-            <Greeting name={firstName} level={resolvedDashboard.current_level} />
+            <Greeting name={firstName} level={dashboard.current_level} />
 
             <ChallengeHero
               challenge={challenge}
@@ -252,19 +250,20 @@ function HomePage() {
               busy={busy}
               confetti={confetti}
               unitSystem={unitSystem}
+              actionUnavailable={!challenge?.assignment?.id}
               onAccept={accept}
               onComplete={complete}
               onSkip={() => setSkipOpen(true)}
             />
 
-            <QuickStats dashboard={resolvedDashboard} unitSystem={unitSystem} />
+            <QuickStats dashboard={dashboard} unitSystem={unitSystem} />
 
-            <InsightCard text={resolvedDashboard.ai_insight} />
+            <InsightCard text={dashboard.ai_insight} />
 
             <WeeklyBreakdown
-              breakdown={resolvedDashboard.this_week.category_breakdown}
-              total={resolvedDashboard.this_week.total_carbon_kg}
-              estimated={Boolean(resolvedDashboard.this_week.is_estimated)}
+              breakdown={dashboard.this_week.category_breakdown}
+              total={dashboard.this_week.total_carbon_kg}
+              estimated={Boolean(dashboard.this_week.is_estimated)}
               unitSystem={unitSystem}
             />
           </>
@@ -278,51 +277,6 @@ function HomePage() {
   );
 }
 
-// ---------- header ----------
-function StickyHeader({ streak, avatarName }: { streak: number; avatarName: string }) {
-  return (
-    <header className="sticky top-0 z-30 border-b border-white/5 bg-background/70 backdrop-blur-xl">
-      <div className="mx-auto flex h-14 w-full max-w-2xl items-center justify-between px-5 sm:px-8">
-        <Link to="/home" className="flex items-center gap-2 text-sm font-bold">
-          <span className="grid h-7 w-7 place-items-center rounded-lg bg-gradient-to-br from-emerald-400 to-teal-300 text-emerald-950">
-            ✦
-          </span>
-          <span className="tracking-tight">CarbonSense</span>
-        </Link>
-
-        <div className="flex items-center gap-2 rounded-full border border-amber-300/30 bg-amber-400/10 px-3 py-1.5">
-          <motion.span
-            aria-hidden
-            animate={{ scale: [1, 1.18, 0.95, 1.1, 1], rotate: [0, -6, 5, -3, 0] }}
-            transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
-            className="text-base leading-none"
-          >
-            🔥
-          </motion.span>
-          <span className="text-sm font-semibold tabular-nums text-amber-200">{streak}</span>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            aria-label="Notifications"
-            className="relative grid h-9 w-9 place-items-center rounded-full border border-white/10 bg-white/5 transition hover:bg-white/10"
-          >
-            <Bell className="h-4 w-4" />
-            <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-emerald-300" />
-          </button>
-          <div
-            aria-label="Account"
-            className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 text-xs font-bold uppercase text-emerald-950"
-          >
-            {avatarName?.slice(0, 1) ?? "U"}
-          </div>
-        </div>
-      </div>
-    </header>
-  );
-}
-
 // ---------- greeting ----------
 function Greeting({
   name,
@@ -331,14 +285,7 @@ function Greeting({
   name: string;
   level?: Dashboard["current_level"];
 }) {
-  const [greeting, emoji] = useMemo(() => {
-    const h = new Date().getHours();
-    if (h < 5) return ["Good night", "🌙"] as const;
-    if (h < 12) return ["Good morning", "🌤"] as const;
-    if (h < 17) return ["Good afternoon", "☀️"] as const;
-    if (h < 21) return ["Good evening", "🌆"] as const;
-    return ["Good night", "🌙"] as const;
-  }, []);
+  const [greeting, emoji] = useMemo(() => getGreetingForHour(new Date().getHours()), []);
 
   return (
     <motion.section
@@ -369,6 +316,7 @@ function ChallengeHero({
   busy,
   confetti,
   unitSystem,
+  actionUnavailable,
   onAccept,
   onComplete,
   onSkip,
@@ -378,6 +326,7 @@ function ChallengeHero({
   busy: boolean;
   confetti: boolean;
   unitSystem: UnitSystem;
+  actionUnavailable: boolean;
   onAccept: () => void;
   onComplete: () => void;
   onSkip: () => void;
@@ -390,7 +339,7 @@ function ChallengeHero({
         transition={{ delay: 0.1 }}
         className="mt-5 rounded-3xl border border-white/10 bg-white/[0.04] p-8 text-center"
       >
-        <p className="text-base text-muted-foreground">No challenge today — enjoy your day off 🌿</p>
+        <p className="text-base text-muted-foreground">Your daily challenge is still syncing from the backend.</p>
       </motion.section>
     );
   }
@@ -441,13 +390,18 @@ function ChallengeHero({
               />
             ))}
           </span>
-          <span>{challenge.participants_today} others doing this today</span>
+          <span>
+            {challenge.participants_today === 0
+              ? "Be the first to do this today"
+              : `${challenge.participants_today} ${pluralUnit(challenge.participants_today, "other")} doing this today`}
+          </span>
         </p>
 
         <div className="relative mt-6">
           <CTAButton
             status={status}
             busy={busy}
+            actionUnavailable={actionUnavailable}
             xp={challenge.xp_reward}
             onAccept={onAccept}
             onComplete={onComplete}
@@ -456,10 +410,10 @@ function ChallengeHero({
             <button
               type="button"
               onClick={onSkip}
-              disabled={busy}
+              disabled={busy || actionUnavailable}
               className="mt-3 block w-full text-center text-xs text-emerald-50/70 underline-offset-4 hover:underline disabled:opacity-50"
             >
-              {busy ? "Working..." : "Skip -> Try Another"}
+              {actionUnavailable ? "Refresh to continue" : busy ? "Working..." : "Skip → Try another"}
             </button>
           )}
         </div>
@@ -481,12 +435,14 @@ function Pill({ children }: { children: React.ReactNode }) {
 function CTAButton({
   status,
   busy,
+  actionUnavailable,
   xp,
   onAccept,
   onComplete,
 }: {
   status: ChallengeStatus;
   busy: boolean;
+  actionUnavailable: boolean;
   xp: number;
   onAccept: () => void;
   onComplete: () => void;
@@ -503,11 +459,13 @@ function CTAButton({
     return (
       <button
         type="button"
-        disabled={busy}
+        disabled={busy || actionUnavailable}
         onClick={onComplete}
         className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-amber-300 to-orange-300 px-6 py-4 text-base font-semibold text-amber-950 shadow-[0_20px_50px_-15px_rgba(251,191,36,0.7)] transition hover:scale-[1.01] active:scale-[0.99] disabled:opacity-60"
       >
-        {busy ? (
+        {actionUnavailable ? (
+          "Refresh to continue"
+        ) : busy ? (
           <>
             <Loader2 className="h-5 w-5 animate-spin" /> Completing...
           </>
@@ -520,11 +478,13 @@ function CTAButton({
   return (
     <button
       type="button"
-      disabled={busy}
+      disabled={busy || actionUnavailable}
       onClick={onAccept}
       className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-white px-6 py-4 text-base font-semibold text-emerald-900 shadow-[0_20px_50px_-15px_rgba(255,255,255,0.4)] transition hover:scale-[1.01] active:scale-[0.99] disabled:opacity-60"
     >
-      {busy ? (
+      {actionUnavailable ? (
+        "Refresh to continue"
+      ) : busy ? (
         <>
           <Loader2 className="h-5 w-5 animate-spin" /> Accepting...
         </>
@@ -569,11 +529,19 @@ function QuickStats({ dashboard, unitSystem }: { dashboard: Dashboard; unitSyste
           <span
             className={[
               "inline-flex items-center gap-1 text-xs font-medium",
-              weekDown ? "text-emerald-300" : "text-amber-300",
+              weekDelta < 0
+                ? "text-emerald-300"
+                : weekDelta > 0
+                  ? "text-amber-300"
+                  : "text-muted-foreground",
             ].join(" ")}
           >
-            {weekDown ? <ArrowDownRight className="h-3 w-3" /> : <ArrowUpRight className="h-3 w-3" />}
-            {Math.abs(weekDelta)}% vs last
+            {weekDelta < 0 ? (
+              <ArrowDownRight className="h-3 w-3" />
+            ) : weekDelta > 0 ? (
+              <ArrowUpRight className="h-3 w-3" />
+            ) : null}
+            {weekDelta === 0 ? "Same as last week" : `${Math.abs(weekDelta)}% vs last`}
           </span>
         }
       />
@@ -857,6 +825,24 @@ function DashboardSkeleton() {
       </div>
       <div className="h-20 animate-pulse rounded-2xl bg-white/5" />
       <div className="h-48 animate-pulse rounded-2xl bg-white/5" />
+    </div>
+  );
+}
+
+function HomeLoadError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6 text-center">
+      <p className="text-lg font-semibold">Couldn't load your live dashboard.</p>
+      <p className="mt-2 text-sm text-muted-foreground">
+        CarbonSense won't show fallback stats here. Retry once the backend is reachable.
+      </p>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="mt-5 rounded-full bg-emerald-400 px-5 py-2 text-sm font-semibold text-emerald-950"
+      >
+        Try again
+      </button>
     </div>
   );
 }

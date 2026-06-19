@@ -20,8 +20,25 @@ export function AppGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (isLoading) return;
-    if (!isAuthenticated || !user) return;
-    if (user.onboarding_complete) return;
+    if (!isAuthenticated || !user) {
+      if (!PUBLIC_PATHS.has(pathname)) {
+        router.navigate({ to: "/login", replace: true });
+      }
+      return;
+    }
+    if (pathname === "/login" || pathname === "/signup") {
+      router.navigate({
+        to: user.onboarding_complete ? "/home" : ONBOARDING_PATH,
+        replace: true,
+      });
+      return;
+    }
+    if (user.onboarding_complete) {
+      if (pathname === ONBOARDING_PATH) {
+        router.navigate({ to: "/home", replace: true });
+      }
+      return;
+    }
     if (pathname === ONBOARDING_PATH) return;
     if (PUBLIC_PATHS.has(pathname)) return;
     router.navigate({ to: ONBOARDING_PATH, replace: true });

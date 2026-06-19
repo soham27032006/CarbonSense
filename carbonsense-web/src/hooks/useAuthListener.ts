@@ -3,18 +3,51 @@ import { api } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import { useAuthStore } from "@/stores/authStore";
 
-async function hydrateProfile(userId: string) {
+type HydratedAuthProfile = {
+  name?: string | null;
+  avatar_url?: string | null;
+  onboarding_complete?: boolean | null;
+  streak?: number;
+  level?: number;
+  level_name?: string;
+};
+
+async function hydrateProfile(userId: string, accessToken?: string): Promise<HydratedAuthProfile | null> {
   try {
-    const { data } = await api.get<{
-      profile?: {
-        name?: string | null;
-        avatar_url?: string | null;
-        onboarding_complete?: boolean | null;
-      };
-    }>("/auth/me");
+    const { data } = await api.get<{ profile?: HydratedAuthProfile }>(
+      "/auth/me",
+      {
+        headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+      },
+    );
     return data.profile ?? null;
   } catch (error) {
     console.warn("[auth] Could not hydrate backend profile", { userId, error });
+    return null;
+  }
+}
+
+async function hydrateProgress(accessToken?: string): Promise<{
+  streak?: number;
+  level?: number;
+  level_name?: string;
+} | null> {
+  try {
+    const { data } = await api.get<{
+      streak?: number;
+      level?: number;
+      level_name?: string;
+    }>("/profile", {
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+    });
+    if (!data || typeof data !== "object") return null;
+    return {
+      streak: typeof data.streak === "number" ? data.streak : undefined,
+      level: typeof data.level === "number" ? data.level : undefined,
+      level_name: typeof data.level_name === "string" ? data.level_name : undefined,
+    };
+  } catch (error) {
+    console.warn("[auth] Could not hydrate progress", { error });
     return null;
   }
 }
@@ -44,7 +77,8 @@ export function useAuthListener() {
         setUser(null);
         return;
       }
-      const profile = await hydrateProfile(session.user.id);
+      const profile = await hydrateProfile(session.user.id, session.access_token);
+      const progress = await hydrateProgress(session.access_token);
       setUser({
         id: session.user.id,
         email: session.user.email ?? "",
@@ -54,7 +88,10 @@ export function useAuthListener() {
         avatar_url:
           profile?.avatar_url ??
           ((session.user.user_metadata?.avatar_url as string | undefined) ?? null),
-        onboarding_complete: profile?.onboarding_complete ?? false,
+        onboarding_complete: profile?.onboarding_complete ?? true,
+        streak: progress?.streak,
+        level: progress?.level,
+        level_name: progress?.level_name,
       });
     };
 

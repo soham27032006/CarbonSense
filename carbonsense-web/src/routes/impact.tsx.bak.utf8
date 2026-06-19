@@ -18,6 +18,7 @@ import {
   Loader2,
   Lock,
   Share2,
+  Sparkles,
   Star,
   Trophy,
   X,
@@ -32,18 +33,13 @@ import {
 import { useUnits } from "@/contexts/UnitsContext";
 import { useAuthStore } from "@/stores/authStore";
 import { StickyHeader } from "@/components/StickyHeader";
-import {
-  EQUIVALENCY_CONFIG,
-  getForestMessage,
-  getTreeCount,
-} from "@/lib/impactDisplay";
 import { formatCO2 } from "@/utils/units";
 
 export const Route = createFileRoute("/impact")({
   ssr: false,
   head: () => ({
     meta: [
-      { title: "Your Impact — CarbonSense" },
+      { title: "Your Impact â€” CarbonSense" },
       {
         name: "description",
         content:
@@ -110,6 +106,18 @@ interface AchievementsResp {
   total: number;
   achievements: Achievement[];
 }
+
+const equivalencyConfig: Record<string, { title: string; icon: string; unit: string }> = {
+  trees_year: { title: "Trees Planted", icon: "ðŸŒ³", unit: "tree" },
+  miles_not_driven: { title: "Miles Not Driven", icon: "ðŸš—", unit: "mile" },
+  smartphones: { title: "Phones Charged", icon: "ðŸ“±", unit: "charge" },
+  smartphones_charged: { title: "Phones Charged", icon: "ðŸ“±", unit: "charge" },
+  flights_saved: { title: "Flights Saved", icon: "âœˆï¸", unit: "flight" },
+  flights_ny_to_la: { title: "Flights Avoided", icon: "âœˆï¸", unit: "flight" },
+  showers: { title: "Showers Saved", icon: "ðŸš¿", unit: "minute" },
+  showers_skipped: { title: "Shower Minutes", icon: "ðŸš¿", unit: "minute" },
+  shower_minutes: { title: "Shower Minutes", icon: "ðŸš¿", unit: "minute" },
+};
 
 const equivalencyFacts: Record<string, string> = {
   trees_year: "Each tree absorbs about 22 kg CO2 per year.",
@@ -182,7 +190,7 @@ function ImpactPage() {
   return (
     <main className="relative min-h-screen overflow-x-hidden bg-background text-foreground">
       <Ambient />
-      <StickyHeader avatarName={firstName} left={<ImpactHeaderLeft />} center={<ImpactHeaderCenter />} />
+      <StickyHeader avatarName={firstName} left={<ImpactHeaderLeft />} center={<ImpactHeaderCenter />} right={<ImpactHeaderRight />} />
 
       <motion.div
         initial={{ opacity: 0, y: 12 }}
@@ -234,7 +242,7 @@ function ImpactPage() {
                 name={firstName}
                 kg={total.carbon_saved_kg}
                 streak={total.best_streak}
-                trees={getTreeCount(total.carbon_saved_kg)}
+                trees={Math.floor(total.carbon_saved_kg / 22)}
                 levelName={level.current.name}
               />
             ) : (
@@ -285,9 +293,15 @@ const ImpactHeaderCenter = () => (
   <h1 className="text-sm font-semibold tracking-tight">Your Impact</h1>
 );
 
+const ImpactHeaderRight = () => (
+  <span className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 text-emerald-950">
+    <Sparkles className="h-4 w-4" />
+  </span>
+);
+
 // ---------- 1. forest hero ----------
 function ForestHero({ carbonSavedKg }: { carbonSavedKg: number }) {
-  const treeCount = getTreeCount(carbonSavedKg);
+  const treeCount = Math.floor(carbonSavedKg / 22);
   const treeText = pluralize(treeCount, "tree", "trees");
 
   // tier: seedling | small | forest | lush
@@ -390,7 +404,7 @@ function ForestHero({ carbonSavedKg }: { carbonSavedKg: number }) {
                 delay: i * 4,
               }}
             >
-              ✦
+              âœ¦
             </motion.span>
           ))}
         {[0, 1, 2].map((i) => (
@@ -402,7 +416,7 @@ function ForestHero({ carbonSavedKg }: { carbonSavedKg: number }) {
             animate={{ y: [0, -20, 0], rotate: [0, 180, 360], opacity: [0.65, 1, 0.65] }}
             transition={{ duration: 5 + i, repeat: Infinity, ease: "easeInOut", delay: i * 0.7 }}
           >
-            🍃
+            ðŸƒ
           </motion.span>
         ))}
       </div>
@@ -414,9 +428,13 @@ function ForestHero({ carbonSavedKg }: { carbonSavedKg: number }) {
           </p>
           <p className="mt-0.5 text-2xl font-bold tracking-tight">
             <span className="text-2xl font-bold tabular-nums">{treeCount}</span> {treeText}{" "}
-            <span aria-hidden>🌳</span>
+            <span aria-hidden>ðŸŒ³</span>
           </p>
-          <p className="mt-1 text-xs text-emerald-100/75">{getForestMessage(treeCount)}</p>
+          {treeCount === 0 && (
+            <p className="mt-1 text-xs text-emerald-100/75">
+              Complete challenges to grow your first tree.
+            </p>
+          )}
         </div>
         <span className="rounded-full bg-emerald-950/40 px-3 py-1.5 text-xs font-medium text-emerald-100">
           {tier === "seedling"
@@ -428,6 +446,9 @@ function ForestHero({ carbonSavedKg }: { carbonSavedKg: number }) {
                 : "Lush canopy"}
         </span>
       </div>
+      <p className="px-5 pb-4 text-xs text-emerald-100/75 sm:px-6">
+        Every challenge grows your forest ðŸŒ±
+      </p>
     </section>
   );
 }
@@ -715,16 +736,12 @@ function EquivCard({ item, index }: { item: Equivalency; index: number }) {
         <span className="text-4xl" aria-hidden>
           {config.icon}
         </span>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0">
           <h3 className="text-base font-bold leading-tight text-foreground">{config.title}</h3>
-          <div className="mt-2 flex flex-wrap items-baseline gap-x-1 gap-y-0.5">
-            <span className="text-3xl font-bold tracking-tight tabular-nums whitespace-nowrap">
-              <CountUp value={item.value} decimal={item.value > 0 && item.value < 1} formatter={formatEquivalencyValue} />
-            </span>
-            <span className="text-sm font-medium text-emerald-100/80 whitespace-nowrap">
-              {displayValue.startsWith("<") ? config.unit : unit}
-            </span>
-          </div>
+          <p className="mt-2 text-3xl font-bold tracking-tight">
+            <CountUp value={item.value} decimal={item.value > 0 && item.value < 1} formatter={formatEquivalencyValue} />
+            <span className="ml-1 text-sm font-medium text-emerald-100/80">{displayValue.startsWith("<") ? config.unit : unit}</span>
+          </p>
         </div>
       </div>
       <p className="relative mt-3 text-sm leading-relaxed text-emerald-50/85">{fact}</p>
@@ -814,7 +831,7 @@ function LevelProgress({ level }: { level: LevelResp }) {
               </span>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">
-                  Level {l.level} · {l.name}
+                  Level {l.level} Â· {l.name}
                 </p>
                 <p className="text-[11px] text-muted-foreground tabular-nums">
                   {l.xp_required === 0 ? "Start" : `${l.xp_required.toLocaleString()} XP`}
@@ -1246,9 +1263,9 @@ function titleizeKey(key: string) {
 
 function getEquivalencyConfig(id: string) {
   return (
-    EQUIVALENCY_CONFIG[id] ?? {
+    equivalencyConfig[id] ?? {
       title: titleizeKey(id),
-      icon: "🌍",
+      icon: "ðŸŒ",
       unit: titleizeKey(id).toLowerCase(),
     }
   );
@@ -1264,7 +1281,7 @@ function formatEquivalencyValue(value: number): string {
 function normalizeEquivalencyItems(items: Equivalency[]) {
   return items
     .map((item) => ({ ...item, value: Number(item.value ?? 0) }))
-    .filter((item) => item.value >= 0.1)
+    .filter((item) => item.value > 0)
     .sort((a, b) => b.value - a.value);
 }
 

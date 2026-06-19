@@ -148,11 +148,11 @@ export async function getProfile(userId: string) {
   const teams = teamsResult.status === "fulfilled" ? teamsResult.value : [];
 
   if (bankResult.status === "rejected") {
-    console.error("Failed to load bank connections for profile", bankResult.reason);
+    console.error("Failed to load bank connections for profile");
   }
 
   if (teamsResult.status === "rejected") {
-    console.error("Failed to load teams for profile", teamsResult.reason);
+    console.error("Failed to load teams for profile");
   }
 
   let challengesCompleted = 0;

@@ -53,6 +53,8 @@
 /* Default = dark mode for CarbonSense */
 :root {
   --radius: 1rem;
+  --header-height: 3.5rem;
+  --sidebar-width: 18rem;
 
   --background: oklch(0.18 0.03 180);
   --foreground: oklch(0.97 0.01 150);

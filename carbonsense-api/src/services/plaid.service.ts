@@ -28,17 +28,33 @@ type PlaidWebhookPayload = {
 };
 
 const ENCRYPTION_ALGORITHM = "aes-256-gcm";
-const plaidClient = new PlaidApi(
-  new Configuration({
-    basePath: PlaidEnvironments[env.PLAID_ENV],
-    baseOptions: {
-      headers: {
-        "PLAID-CLIENT-ID": env.PLAID_CLIENT_ID,
-        "PLAID-SECRET": env.PLAID_SECRET
+let plaidClient: PlaidApi | null = null;
+
+try {
+  plaidClient = new PlaidApi(
+    new Configuration({
+      basePath: PlaidEnvironments[env.PLAID_ENV],
+      baseOptions: {
+        headers: {
+          "PLAID-CLIENT-ID": env.PLAID_CLIENT_ID,
+          "PLAID-SECRET": env.PLAID_SECRET
+        }
       }
-    }
-  })
-);
+    })
+  );
+} catch (error) {
+  console.warn("Plaid not configured - bank features disabled", {
+    message: error instanceof Error ? error.message : "Unknown Plaid setup error"
+  });
+}
+
+function getPlaidClient(): PlaidApi {
+  if (!plaidClient) {
+    throw new Error("Bank connection is temporarily unavailable");
+  }
+
+  return plaidClient;
+}
 
 function encryptionKey(): Buffer {
   return crypto.createHash("sha256").update(env.JWT_SECRET).digest();
@@ -129,14 +145,15 @@ async function getOwnedConnection(
 }
 
 export async function createLinkToken(userId: string): Promise<string> {
-  const response = await plaidClient.linkTokenCreate({
+  const response = await getPlaidClient().linkTokenCreate({
     user: {
       client_user_id: userId
     },
     client_name: "CarbonSense",
     products: [Products.Transactions],
     country_codes: [CountryCode.Us],
-    language: "en"
+    language: "en",
+    redirect_uri: env.PLAID_REDIRECT_URI || undefined
   });
 
   return response.data.link_token;
@@ -148,7 +165,7 @@ export async function exchangePublicToken(
   institutionId: string,
   institutionName: string
 ): Promise<PublicConnection & { initial_sync: SyncResult }> {
-  const exchangeResponse = await plaidClient.itemPublicTokenExchange({
+  const exchangeResponse = await getPlaidClient().itemPublicTokenExchange({
     public_token: publicToken
   });
   const { access_token: accessToken, item_id: itemId } = exchangeResponse.data;
@@ -205,7 +222,7 @@ export async function syncTransactions(
   const affectedDates = new Set<string>();
 
   while (hasMore) {
-    const syncResponse = await plaidClient.transactionsSync({
+    const syncResponse = await getPlaidClient().transactionsSync({
       access_token: accessToken,
       cursor,
       count: 500
@@ -298,7 +315,7 @@ export async function disconnectBank(
   const connection = await getOwnedConnection(userId, connectionId);
   const accessToken = decryptAccessToken(connection.plaid_access_token);
 
-  await plaidClient.itemRemove({
+  await getPlaidClient().itemRemove({
     access_token: accessToken
   });
 

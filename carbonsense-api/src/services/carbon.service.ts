@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { ChallengeCategory } from "../types";
 import type { CarbonCategory, CarbonSource, Json } from "../types";
 import { supabaseAdmin } from "../config/supabase";
+import { addDaysToDateString, daysAgoIndia, todayIndia } from "../utils/date";
 import {
   CATEGORY_CARBON_MAP,
   MERCHANT_CARBON_MAP,
@@ -368,50 +369,75 @@ export async function classifyWithAI(
 }
 
 export async function getDashboard(userId: string) {
-  const today = formatDate(new Date());
-  const week = getPeriodBounds(today, "week");
-  const lastWeek = offsetPeriod(week.periodStart, "week", -1);
-  const month = getPeriodBounds(today, "month");
-  const lastMonth = offsetPeriod(month.periodStart, "month", -1);
+  const today = todayIndia();
+  const week = getDateRangeBounds(today, 6);
+  const previousWeek = getDateRangeBounds(daysAgoIndia(7), 6);
+  const month = getMonthRangeBounds(today);
+  const previousMonth = getMonthRangeBounds(offsetPeriod(month.start, "month", -1).periodStart);
+  const yearStart = `${today.slice(0, 4)}-01-01`;
+  const yearEnd = `${today.slice(0, 4)}-12-31`;
 
-  const [{ data: user, error: userError }, todayCarbon, thisWeek, previousWeek, thisMonth, previousMonth, aiInsight, challengeStatus] =
+  const [
+    { data: user, error: userError },
+    todayCarbon,
+    thisWeek,
+    previousWeekCarbon,
+    thisMonth,
+    previousMonthCarbon,
+    thisYear,
+    aiInsight,
+    challengeStatus,
+    hasLiveData
+  ] =
     await Promise.all([
       supabaseAdmin
         .from("users")
         .select("carbon_age,level,level_name,xp,streak_count,streak_max,streak_freeze_available,onboarding_data")
         .eq("id", userId)
         .single(),
-      getSummary(userId, "day", today),
-      getSummary(userId, "week", week.periodStart),
-      getSummary(userId, "week", lastWeek.periodStart),
-      getSummary(userId, "month", month.periodStart),
-      getSummary(userId, "month", lastMonth.periodStart),
-      generateDailyInsight(userId),
-      getTodayChallengeStatus(userId, today)
+      getChallengeCarbonSnapshot(userId, today, today),
+      getChallengeCarbonSnapshot(userId, week.start, week.end),
+      getChallengeCarbonSnapshot(userId, previousWeek.start, previousWeek.end),
+      getChallengeCarbonSnapshot(userId, month.start, month.end),
+      getChallengeCarbonSnapshot(userId, previousMonth.start, previousMonth.end),
+      getChallengeCarbonSnapshot(userId, yearStart, yearEnd),
+      generateDailyInsightForDashboard(userId),
+      getTodayChallengeStatus(userId, today),
+      hasAnyLiveCarbonData(userId)
     ]);
 
   if (userError || !user) {
     throw new Error("Unable to load dashboard profile");
   }
 
-  const estimatedWeek = isZeroSummary(thisWeek)
-    ? estimateWeeklyFromOnboarding(user.onboarding_data)
-    : null;
-  const effectiveTodayCarbon = estimatedWeek
-    ? roundKg(estimatedWeek.weekly_total / 7)
-    : todayCarbon.total_carbon_kg;
-  const effectiveWeekTotal = estimatedWeek
-    ? estimatedWeek.weekly_total
-    : thisWeek.total_carbon_kg;
-  const effectiveWeekBreakdown = estimatedWeek
-    ? estimatedWeek.categories
-    : toCategoryBreakdownKg(thisWeek);
-  const effectiveMonthTotal = estimatedWeek
-    ? roundKg(estimatedWeek.weekly_total * 4.33)
-    : thisMonth.total_carbon_kg;
+  const onboarding = (user.onboarding_data ?? {}) as Record<string, unknown>;
+  const biologicalAge = Number(
+    (onboarding.biological_age as number | undefined) ?? DEFAULT_BIOLOGICAL_AGE
+  );
+  const userCountry = String((onboarding.country as string | undefined) ?? "India");
+  const targetTons = getCountryTargetTons(userCountry);
+
+  const monthlyTotalKg = thisMonth.total_carbon_kg || todayCarbon.total_carbon_kg;
+  const estimatedAnnualTonsFromMonthly = (monthlyTotalKg * 12) / 1000;
+  const estimatedAnnualTons = monthlyTotalKg > 0
+    ? estimatedAnnualTonsFromMonthly
+    : Number(
+        (onboarding.estimated_annual_tons as number | undefined) ??
+          (onboarding.annual_carbon_tons as number | undefined) ??
+          0
+      );
+  const carbonAge = Number.isFinite(user.carbon_age) && user.carbon_age > 0
+    ? Number(user.carbon_age)
+    : calculateCarbonAge(biologicalAge, estimatedAnnualTons, userCountry);
+
+  const realAge = biologicalAge;
+  const targetAge = Math.max(20, biologicalAge - 5);
 
   return {
-    carbon_age: user.carbon_age,
+    carbon_age: carbonAge,
+    real_age: realAge,
+    target_age: targetAge,
+    target_tons: targetTons,
     current_level: {
       level: user.level,
       name: user.level_name,
@@ -424,28 +450,34 @@ export async function getDashboard(userId: string) {
       freeze_available: user.streak_freeze_available
     },
     today: {
-      carbon_kg: effectiveTodayCarbon,
+      carbon_kg: todayCarbon.total_carbon_kg,
       challenge_status: challengeStatus
     },
     this_week: {
-      total_carbon_kg: effectiveWeekTotal,
+      total_carbon_kg: thisWeek.total_carbon_kg,
       vs_last_week_percent: percentChange(
-        effectiveWeekTotal,
-        previousWeek.total_carbon_kg
+        thisWeek.total_carbon_kg,
+        previousWeekCarbon.total_carbon_kg
       ),
-      category_breakdown: effectiveWeekBreakdown,
-      is_estimated: Boolean(estimatedWeek)
+      category_breakdown: thisWeek.category_breakdown,
+      is_estimated: !hasLiveData
     },
     this_month: {
-      total_carbon_kg: effectiveMonthTotal,
+      total_carbon_kg: thisMonth.total_carbon_kg,
       vs_last_month_percent: percentChange(
-        effectiveMonthTotal,
-        previousMonth.total_carbon_kg
+        thisMonth.total_carbon_kg,
+        previousMonthCarbon.total_carbon_kg
       ),
       daily_average_kg: roundKg(
-        effectiveMonthTotal / Math.max(new Date().getUTCDate(), 1)
+        thisMonth.total_carbon_kg / Math.max(Number(today.slice(8, 10)), 1)
       ),
-      is_estimated: Boolean(estimatedWeek)
+      category_breakdown: thisMonth.category_breakdown,
+      is_estimated: !hasLiveData
+    },
+    this_year: {
+      total_carbon_kg: thisYear.total_carbon_kg,
+      category_breakdown: thisYear.category_breakdown,
+      is_estimated: !hasLiveData
     },
     ai_insight: aiInsight
   };
@@ -463,7 +495,7 @@ export async function getTransactions(
   let query = supabaseAdmin
     .from("transactions")
     .select(
-      "id,merchant_name,amount,carbon_kg,carbon_category,carbon_confidence,transaction_date",
+      "id,merchant_name,amount,currency,carbon_kg,carbon_category,carbon_confidence,transaction_date",
       { count: "exact" }
     )
     .eq("user_id", userId)
@@ -500,11 +532,15 @@ export async function getTransactions(
   return {
     transactions: (data ?? []).map((transaction) => ({
       id: transaction.id,
+      merchant: transaction.merchant_name,
       merchant_name: transaction.merchant_name,
-      amount: Number(transaction.amount),
-      carbon_kg: Number(transaction.carbon_kg),
+      category: transaction.carbon_category,
       carbon_category: transaction.carbon_category,
+      amount: Number(transaction.amount),
+      currency: (transaction as { currency?: string }).currency ?? "₹",
+      carbon_kg: Number(transaction.carbon_kg),
       confidence: Number(transaction.carbon_confidence),
+      occurred_at: transaction.transaction_date,
       date: transaction.transaction_date,
       icon: getCategoryIcon(transaction.carbon_category)
     })),
@@ -527,39 +563,135 @@ export async function getTrends(
   range: number
 ) {
   const periodType: PeriodType = period === "weekly" ? "week" : "month";
-  const { data, error } = await supabaseAdmin
-    .from("carbon_summaries")
-    .select("*")
-    .eq("user_id", userId)
-    .eq("period_type", periodType)
-    .order("period_start", { ascending: false })
-    .limit(range);
+  const [{ data, error }, { data: user, error: userError }] = await Promise.all([
+    supabaseAdmin
+      .from("carbon_summaries")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("period_type", periodType)
+      .order("period_start", { ascending: false })
+      .limit(range),
+    supabaseAdmin
+      .from("users")
+      .select("onboarding_data")
+      .eq("id", userId)
+      .maybeSingle()
+  ]);
 
-  if (error) {
+  if (error || userError) {
     throw new Error("Unable to load carbon trends");
   }
 
-  const trends = [...(data ?? [])].reverse().map((summary) => ({
-    period_start: summary.period_start,
-    total_kg: Number(summary.total_carbon_kg),
-    category_breakdown: toCategoryBreakdownKg(summary)
-  }));
-  const first = trends[0]?.total_kg ?? 0;
-  const last = trends[trends.length - 1]?.total_kg ?? 0;
+  const rows = data ?? [];
+  const estimate = rows.length === 0 ? estimateWeeklyFromOnboarding(user?.onboarding_data) : null;
+
+  const points = estimate
+    ? buildEstimatedTrendPoints(periodType, range, estimate)
+    : [...rows]
+        .reverse()
+        .map((summary, idx, all) => buildLiveTrendPoint(summary, all, idx, periodType));
+
+  const total = points.reduce((sum, p) => sum + p.value, 0);
+  const average = points.length > 0 ? roundKg(total / points.length) : 0;
+  const first = points[0]?.value ?? 0;
+  const last = points[points.length - 1]?.value ?? 0;
 
   return {
-    trends,
-    overall_change_percent: percentChange(last, first),
-    best_period: getExtremePeriod(trends, "best"),
-    worst_period: getExtremePeriod(trends, "worst")
+    points,
+    period: periodType,
+    range,
+    unit: "kg",
+    total: roundKg(total),
+    average,
+    change_percent: percentChange(last, first),
+    is_estimated: !!estimate,
+    best_period: getExtremePeriod(
+      points.map((p) => ({ period_start: p.label, total_kg: p.value })),
+      "best"
+    ),
+    worst_period: getExtremePeriod(
+      points.map((p) => ({ period_start: p.label, total_kg: p.value })),
+      "worst"
+    )
   };
+}
+
+function buildLiveTrendPoint(
+  summary: Record<string, unknown>,
+  all: Record<string, unknown>[],
+  idx: number,
+  periodType: "week" | "month"
+) {
+  const value = roundKg(Number(summary.total_carbon_kg ?? 0));
+  const prev = idx > 0 ? roundKg(Number(all[idx - 1].total_carbon_kg ?? 0)) : value;
+  return {
+    label: formatPeriodLabel(
+      String(summary.period_start ?? ""),
+      idx,
+      all.length,
+      periodType
+    ),
+    period_start: String(summary.period_start ?? ""),
+    value,
+    previous: prev
+  };
+}
+
+function buildEstimatedTrendPoints(
+  periodType: "week" | "month",
+  range: number,
+  estimate: WeeklyCarbonEstimate
+): Array<{ label: string; period_start: string; value: number; previous: number }> {
+  const safeRange = Math.max(1, range);
+  const baseTotalKg =
+    periodType === "week" ? estimate.weekly_total : roundKg(estimate.weekly_total * 4.33);
+  const baseValue = baseTotalKg / safeRange;
+
+  const current = getPeriodBounds(todayIndia(), periodType);
+
+  return Array.from({ length: safeRange }, (_, index) => {
+    const stepsBack = safeRange - index - 1;
+    const period = offsetPeriod(current.periodStart, periodType, -stepsBack);
+    const variation = 1 + Math.sin((index + 1) * 0.85) * 0.18 + Math.cos(index * 0.4) * 0.06;
+    const value = roundKg(Math.max(baseValue * variation, baseValue * 0.6));
+    const previousValue = index > 0
+      ? roundKg(Math.max(baseValue * (1 + Math.sin(index * 0.85) * 0.18 + Math.cos((index - 1) * 0.4) * 0.06), baseValue * 0.6))
+      : value;
+
+    return {
+      label: formatPeriodLabel(period.periodStart, index, safeRange, periodType),
+      period_start: period.periodStart,
+      value,
+      previous: previousValue
+    };
+  });
+}
+
+function formatPeriodLabel(
+  periodStart: string,
+  index: number,
+  total: number,
+  periodType: "week" | "month"
+): string {
+  if (!periodStart) return periodType === "week" ? `W${index + 1}` : `M${index + 1}`;
+  const parsed = new Date(`${periodStart}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) return periodStart;
+  if (periodType === "week") {
+    const endOfWeek = new Date(parsed);
+    endOfWeek.setUTCDate(endOfWeek.getUTCDate() + 6);
+    if (total <= 6) {
+      return parsed.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+    }
+    return `${parsed.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}`;
+  }
+  return parsed.toLocaleDateString("en-US", { month: "short", year: "2-digit", timeZone: "UTC" });
 }
 
 export async function getCategoryDetail(
   userId: string,
   category: CarbonCategory
 ) {
-  const today = formatDate(new Date());
+  const today = todayIndia();
   const month = getPeriodBounds(today, "month");
   const thisMonth = await getSummary(userId, "month", month.periodStart);
   const thisMonthCategoryKg = Number(thisMonth[`${category}_kg`]);
@@ -620,30 +752,101 @@ export async function getCategoryDetail(
 }
 
 export async function getComparison(userId: string) {
-  const today = formatDate(new Date());
+  const today = todayIndia();
   const thisMonth = getPeriodBounds(today, "month");
   const lastMonth = offsetPeriod(thisMonth.periodStart, "month", -1);
-  const [currentSummary, previousSummary] = await Promise.all([
+  const [currentSummary, previousSummary, { data: user, error: userError }] = await Promise.all([
     getSummary(userId, "month", thisMonth.periodStart),
-    getSummary(userId, "month", lastMonth.periodStart)
+    getSummary(userId, "month", lastMonth.periodStart),
+    supabaseAdmin
+      .from("users")
+      .select("onboarding_data")
+      .eq("id", userId)
+      .maybeSingle()
   ]);
-  const userMonthlyKg = currentSummary.total_carbon_kg;
-  const percentile = Math.min(
-    99,
-    Math.max(1, Math.round((userMonthlyKg / nationalAverageMonthlyKg) * 50))
-  );
+  if (userError) {
+    throw new Error("Unable to load comparison profile");
+  }
+
+  const estimate = isZeroSummary(currentSummary)
+    ? estimateWeeklyFromOnboarding(user?.onboarding_data)
+    : null;
+  const userMonthlyKg = estimate
+    ? roundKg(estimate.weekly_total * 4.33)
+    : currentSummary.total_carbon_kg;
+
+  const onboarding = (user?.onboarding_data ?? {}) as Record<string, unknown>;
+  const settings = (onboarding.settings ?? {}) as Record<string, unknown>;
+
+  const rawCountry = String(
+    (settings.country as string | undefined) ??
+      (onboarding.country as string | undefined) ??
+      "India"
+  ).trim();
+  const countryName = capitalizeCountryName(rawCountry);
+
+  const nationalAvgKg = COUNTRY_AVG_KG[countryName] ?? COUNTRY_AVG_KG.default;
+  const parisTargetKg = PARIS_TARGET_KG;
+
+  const percentile = Math.round((1 - userMonthlyKg / nationalAvgKg) * 100);
+  const topPercent = Math.max(1, Math.min(99, percentile));
+  const vsLast = percentChange(userMonthlyKg, previousSummary.total_carbon_kg);
 
   return {
     user_monthly_kg: userMonthlyKg,
-    national_average_kg: nationalAverageMonthlyKg,
-    city_average_kg: nationalAverageMonthlyKg,
-    vs_last_month_percent: percentChange(
-      userMonthlyKg,
-      previousSummary.total_carbon_kg
-    ),
-    percentile,
-    ranking_text: `You're in the top ${percentile}% in the US`
+    national_average_kg: nationalAvgKg,
+    city_average_kg: nationalAvgKg,
+    paris_target_kg: parisTargetKg,
+    vs_last_month_percent: vsLast,
+    top_percent: topPercent,
+    better_than_percent: topPercent,
+    improving: vsLast <= 0,
+    ranking_text: `You're in the top ${topPercent}% in ${countryName}`,
+    country: countryName,
+    message: `Your monthly footprint is ${formatKg(userMonthlyKg)} versus the ${countryName} average of ${formatKg(nationalAvgKg)}.`
   };
+}
+
+const COUNTRY_AVG_KG: Record<string, number> = {
+  India: 167,
+  US: 1333,
+  UK: 833,
+  Canada: 1467,
+  Australia: 1567,
+  Germany: 933,
+  France: 700,
+  default: 500
+};
+
+const PARIS_TARGET_KG = 333;
+
+function capitalizeCountryName(name: string): string {
+  if (!name) return "India";
+  const normalized = name.toLowerCase().trim();
+  const known: Record<string, string> = {
+    india: "India",
+    in: "India",
+    "united states": "US",
+    us: "US",
+    usa: "US",
+    "united kingdom": "UK",
+    uk: "UK",
+    gb: "UK",
+    england: "UK",
+    canada: "Canada",
+    ca: "Canada",
+    australia: "Australia",
+    au: "Australia",
+    germany: "Germany",
+    de: "Germany",
+    france: "France",
+    fr: "France"
+  };
+  return known[normalized] ?? (name.charAt(0).toUpperCase() + name.slice(1));
+}
+
+function formatKg(value: number): string {
+  return `${Math.round(value)} kg`;
 }
 
 export async function generateDailyInsight(userId: string): Promise<string> {
@@ -674,6 +877,17 @@ export async function generateDailyInsight(userId: string): Promise<string> {
   }
 }
 
+async function generateDailyInsightForDashboard(userId: string): Promise<string> {
+  return Promise.race([
+    generateDailyInsight(userId),
+    new Promise<string>((resolve) => {
+      setTimeout(() => {
+        resolve("Your dashboard is ready. Connect transactions or complete today's challenge to unlock sharper insights.");
+      }, 1200);
+    })
+  ]);
+}
+
 function getNewUserInsight(): string {
   const insights = [
     "Complete your first challenge today to start tracking real carbon savings.",
@@ -682,7 +896,7 @@ function getNewUserInsight(): string {
     "Try finishing three challenges this week to build momentum and unlock achievements.",
     "Your onboarding estimate gives us a starting point. Completed challenges will make it more personal."
   ];
-  const dayIndex = new Date().getUTCDate() % insights.length;
+  const dayIndex = Number(todayIndia().slice(8, 10)) % insights.length;
 
   return insights[dayIndex];
 }
@@ -719,6 +933,96 @@ async function getTodayChallengeStatus(
   }
 
   return data.status;
+}
+
+type ChallengeCarbonSnapshot = {
+  total_carbon_kg: number;
+  category_breakdown: Record<CarbonCategory, number>;
+};
+
+async function getChallengeCarbonSnapshot(
+  userId: string,
+  startDate: string,
+  endDate: string
+): Promise<ChallengeCarbonSnapshot> {
+  const { data, error } = await supabaseAdmin
+    .from("user_challenges")
+    .select("completed_at, challenge:challenges(category,carbon_save_kg)")
+    .eq("user_id", userId)
+    .eq("status", "completed")
+    .not("completed_at", "is", null)
+    .gte("completed_at", `${startDate}T00:00:00.000Z`)
+    .lte("completed_at", `${endDate}T23:59:59.999Z`);
+
+  if (error) {
+    throw new Error("Unable to load challenge carbon totals");
+  }
+
+  const category_breakdown: Record<CarbonCategory, number> = {
+    food: 0,
+    transport: 0,
+    home: 0,
+    shopping: 0,
+    travel: 0,
+    other: 0
+  };
+
+  for (const row of data ?? []) {
+    const challengeValue = Array.isArray(row.challenge)
+      ? row.challenge[0]
+      : row.challenge;
+    const category = mapChallengeCategoryToCarbonCategory(
+      challengeValue?.category
+    );
+    const carbonSaveKg = Number(challengeValue?.carbon_save_kg ?? 0);
+    category_breakdown[category] = roundKg(
+      category_breakdown[category] + carbonSaveKg
+    );
+  }
+
+  const total_carbon_kg = roundKg(
+    Object.values(category_breakdown).reduce((sum, value) => sum + value, 0)
+  );
+
+  return {
+    total_carbon_kg,
+    category_breakdown
+  };
+}
+
+function mapChallengeCategoryToCarbonCategory(
+  category: string | null | undefined
+): CarbonCategory {
+  switch (category) {
+    case "food":
+    case "transport":
+    case "home":
+    case "shopping":
+      return category;
+    case "lifestyle":
+      return "other";
+    default:
+      return "other";
+  }
+}
+
+function getDateRangeBounds(endDate: string, lookbackDays: number) {
+  return {
+    start: daysAgoFromDate(endDate, lookbackDays),
+    end: endDate
+  };
+}
+
+function getMonthRangeBounds(date: string) {
+  const { periodStart, periodEnd } = getPeriodBounds(date, "month");
+  return {
+    start: periodStart,
+    end: addDaysToDateString(periodEnd, -1)
+  };
+}
+
+function daysAgoFromDate(date: string, days: number): string {
+  return addDaysToDateString(date, -days);
 }
 
 async function getSummary(
@@ -850,8 +1154,47 @@ function estimateWeeklyFromOnboarding(onboardingData: Json): WeeklyCarbonEstimat
   return weeklyTotal > 0 ? { weekly_total: weeklyTotal, categories } : null;
 }
 
+function getEstimatedTrends(
+  periodType: "week" | "month",
+  range: number,
+  estimate: WeeklyCarbonEstimate
+) {
+  const safeRange = Math.max(1, range);
+  const current = getPeriodBounds(todayIndia(), periodType);
+  const total =
+    periodType === "week"
+      ? estimate.weekly_total
+      : roundKg(estimate.weekly_total * 4.33);
+  const categoryMultiplier = periodType === "week" ? 1 : 4.33;
+
+  return Array.from({ length: safeRange }, (_, index) => {
+    const stepsBack = safeRange - index - 1;
+    const period = offsetPeriod(current.periodStart, periodType, -stepsBack);
+    const category_breakdown = Object.fromEntries(
+      Object.entries(estimate.categories).map(([category, value]) => [
+        category,
+        roundKg(value * categoryMultiplier)
+      ])
+    ) as Record<CarbonCategory, number>;
+
+    return {
+      period_start: period.periodStart,
+      total_kg: total,
+      category_breakdown
+    };
+  });
+}
+
 function annualTonsToWeeklyKg(value: Json | undefined): number {
   return roundKg((Number(value ?? 0) * 1000) / 52);
+}
+
+async function hasAnyLiveCarbonData(userId: string): Promise<boolean> {
+  const { count, error } = await supabaseAdmin
+    .from("transactions")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId);
+  return !error && (count ?? 0) > 0;
 }
 
 function weeklyLookup(value: Json | undefined, map: Record<string, number>): number {

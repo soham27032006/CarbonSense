@@ -14,6 +14,10 @@ const paramsSchema = z.object({
   id: z.string().uuid()
 });
 
+const todayQuerySchema = z.object({
+  alt: z.coerce.number().int().min(0).max(20).default(0)
+});
+
 const skipSchema = z.object({
   reason: z
     .string()
@@ -49,9 +53,15 @@ export async function today(
   next: NextFunction
 ): Promise<void> {
   try {
-    const challenge = await getTodayChallenge(requireUserId(req));
+    const { alt } = todayQuerySchema.parse(req.query);
+    const challenge = await getTodayChallenge(requireUserId(req), alt);
     res.status(200).json({ success: true, data: { challenge } });
   } catch (error) {
+    if (error instanceof z.ZodError) {
+      next(error);
+      return;
+    }
+
     next(toChallengeError(error));
     return;
   }

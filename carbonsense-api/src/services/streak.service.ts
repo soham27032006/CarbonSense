@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "../config/supabase";
+import { todayIndia, yesterdayIndia } from "../utils/date";
 import { addXP } from "./gamification.service";
 
 export type IncrementStreakResult = {
@@ -22,20 +23,10 @@ const streakMilestoneBonusXp = new Map<number, number>([
   [365, 1000]
 ]);
 
-function formatDate(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
-
-function addDays(date: Date, days: number): Date {
-  const nextDate = new Date(date);
-  nextDate.setUTCDate(nextDate.getUTCDate() + days);
-  return nextDate;
-}
-
 export async function incrementStreak(
   userId: string
 ): Promise<IncrementStreakResult> {
-  const today = formatDate(new Date());
+  const today = todayIndia();
 
   const { data: user, error: userError } = await supabaseAdmin
     .from("users")
@@ -99,8 +90,8 @@ export async function incrementStreak(
 export async function checkAndResetStreak(
   userId: string
 ): Promise<StreakResetResult> {
-  const today = formatDate(new Date());
-  const yesterday = formatDate(addDays(new Date(), -1));
+  const today = todayIndia();
+  const yesterday = yesterdayIndia();
 
   const { data: user, error: userError } = await supabaseAdmin
     .from("users")

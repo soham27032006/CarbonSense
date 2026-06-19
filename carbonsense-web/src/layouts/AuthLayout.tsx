@@ -4,7 +4,7 @@ import { Logo } from "@/components/Logo";
 
 export function AuthLayout({ children }: { children: ReactNode }) {
   return (
-    <main className="relative min-h-screen overflow-x-hidden">
+    <main className="relative min-h-full overflow-x-hidden">
       {/* Animated aurora orbs */}
       <div className="pointer-events-none absolute inset-0 -z-10">
         <div className="absolute -top-32 -left-24 h-[420px] w-[420px] rounded-full bg-primary/25 blur-3xl animate-aurora" />
@@ -12,7 +12,7 @@ export function AuthLayout({ children }: { children: ReactNode }) {
         <div className="absolute -bottom-40 left-1/4 h-[360px] w-[360px] rounded-full bg-warm/15 blur-3xl animate-aurora" />
       </div>
 
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col items-center justify-center px-5 py-10">
+      <div className="mx-auto flex min-h-full w-full max-w-md flex-col items-center justify-center px-5 py-10">
         <Logo size="lg" showTagline />
         <motion.div
           initial={{ opacity: 0, y: 16 }}

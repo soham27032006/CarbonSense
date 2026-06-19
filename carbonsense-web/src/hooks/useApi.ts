@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import api from "../lib/api";
+import { useAuthStore } from "@/stores/authStore";
 
 type QueryParams = Record<string, string | number | boolean | undefined | null>;
 
@@ -17,9 +18,29 @@ function invalidateCore(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["profile"] });
 }
 
+function useScopedUserId() {
+  return useAuthStore((state) => state.user?.id ?? state.session?.user?.id ?? null);
+}
+
+function useAuthedQuery<TData>(options: {
+  queryKey: unknown[];
+  queryFn: () => Promise<TData>;
+  enabled?: boolean;
+  staleTime?: number;
+  refetchOnWindowFocus?: boolean;
+}) {
+  const userId = useScopedUserId();
+
+  return useQuery({
+    ...options,
+    queryKey: [...options.queryKey, userId],
+    enabled: Boolean(userId) && (options.enabled ?? true),
+  });
+}
+
 // Auth
 export const useCurrentUser = () =>
-  useQuery({
+  useAuthedQuery({
     queryKey: ["auth-me"],
     queryFn: () => api.get("/auth/me").then((r) => r.data),
     staleTime: 60_000,
@@ -28,7 +49,7 @@ export const useCurrentUser = () =>
 
 // Dashboard
 export const useDashboard = () =>
-  useQuery({
+  useAuthedQuery({
     queryKey: ["dashboard"],
     queryFn: () => api.get("/carbon/dashboard").then((r) => r.data),
     staleTime: 30_000,
@@ -36,34 +57,34 @@ export const useDashboard = () =>
   });
 
 export const useTransactions = (params?: QueryParams) =>
-  useQuery({
+  useAuthedQuery({
     queryKey: ["transactions", cleanParams(params)],
     queryFn: () =>
       api.get("/carbon/transactions", { params: cleanParams(params) }).then((r) => r.data),
   });
 
 export const useTrends = (period: string, range: number) =>
-  useQuery({
+  useAuthedQuery({
     queryKey: ["trends", period, range],
     queryFn: () => api.get("/carbon/trends", { params: { period, range } }).then((r) => r.data),
   });
 
 export const useCategoryDetail = (category: string) =>
-  useQuery({
+  useAuthedQuery({
     queryKey: ["category-detail", category],
     queryFn: () => api.get(`/carbon/category/${category}`).then((r) => r.data),
     enabled: Boolean(category),
   });
 
 export const useComparison = () =>
-  useQuery({
+  useAuthedQuery({
     queryKey: ["comparison"],
     queryFn: () => api.get("/carbon/compare").then((r) => r.data),
   });
 
 // Challenges
 export const useTodayChallenge = () =>
-  useQuery({
+  useAuthedQuery({
     queryKey: ["challenge-today"],
     queryFn: () => api.get("/challenges/today").then((r) => r.data),
     staleTime: 30_000,
@@ -96,21 +117,23 @@ export const useSkipChallenge = () => {
 };
 
 export const useChallengeHistory = (params?: QueryParams) =>
-  useQuery({
+  useAuthedQuery({
     queryKey: ["challenge-history", cleanParams(params)],
     queryFn: () =>
       api.get("/challenges/history", { params: cleanParams(params) }).then((r) => r.data),
   });
 
 export const useChallengeLibrary = () =>
-  useQuery({
+  useAuthedQuery({
     queryKey: ["challenge-library"],
     queryFn: () => api.get("/challenges/library").then((r) => r.data),
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
   });
 
 // Streaks and gamification
 export const useStreaks = () =>
-  useQuery({
+  useAuthedQuery({
     queryKey: ["streaks"],
     queryFn: () => api.get("/streaks").then((r) => r.data),
   });
@@ -124,13 +147,13 @@ export const useUseStreakFreeze = () => {
 };
 
 export const useAchievements = () =>
-  useQuery({
+  useAuthedQuery({
     queryKey: ["achievements"],
     queryFn: () => api.get("/achievements").then((r) => r.data),
   });
 
 export const useLevel = () =>
-  useQuery({
+  useAuthedQuery({
     queryKey: ["level"],
     queryFn: () => api.get("/level").then((r) => r.data),
   });
@@ -142,20 +165,20 @@ export const useCopilotChat = () =>
   });
 
 export const useCopilotSuggestions = () =>
-  useQuery({
+  useAuthedQuery({
     queryKey: ["copilot-suggestions"],
     queryFn: () => api.get("/copilot/suggestions").then((r) => r.data),
   });
 
 export const useCopilotHistory = () =>
-  useQuery({
+  useAuthedQuery({
     queryKey: ["copilot-history"],
     queryFn: () => api.get("/copilot/history").then((r) => r.data),
   });
 
 // Teams
 export const useMyTeams = () =>
-  useQuery({
+  useAuthedQuery({
     queryKey: ["my-teams"],
     queryFn: () => api.get("/teams/my-teams").then((r) => r.data),
   });
@@ -179,14 +202,14 @@ export const useJoinTeam = () => {
 };
 
 export const useTeam = (id: string) =>
-  useQuery({
+  useAuthedQuery({
     queryKey: ["team", id],
     queryFn: () => api.get(`/teams/${id}`).then((r) => r.data),
     enabled: Boolean(id),
   });
 
 export const useTeamLeaderboard = (id: string, period: string) =>
-  useQuery({
+  useAuthedQuery({
     queryKey: ["team-leaderboard", id, period],
     queryFn: () =>
       api.get(`/teams/${id}/leaderboard`, { params: { period } }).then((r) => r.data),
@@ -195,26 +218,26 @@ export const useTeamLeaderboard = (id: string, period: string) =>
 
 // Impact
 export const useImpact = () =>
-  useQuery({
+  useAuthedQuery({
     queryKey: ["impact"],
     queryFn: () => api.get("/impact/total").then((r) => r.data),
   });
 
 export const useImpactEquivalencies = () =>
-  useQuery({
+  useAuthedQuery({
     queryKey: ["impact-equivalencies"],
     queryFn: () => api.get("/impact/equivalencies").then((r) => r.data),
   });
 
 export const useShareCard = () =>
-  useQuery({
+  useAuthedQuery({
     queryKey: ["share-card"],
     queryFn: () => api.get("/impact/share-card").then((r) => r.data),
   });
 
 // Profile
 export const useProfile = () =>
-  useQuery({
+  useAuthedQuery({
     queryKey: ["profile"],
     queryFn: () => api.get("/profile").then((r) => r.data),
   });
@@ -228,7 +251,7 @@ export const useUpdateProfile = () => {
 };
 
 export const useCarbonAge = () =>
-  useQuery({
+  useAuthedQuery({
     queryKey: ["carbon-age"],
     queryFn: () => api.get("/profile/carbon-age").then((r) => r.data),
   });

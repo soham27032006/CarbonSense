@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { redis, redisEnabled } from "../config/redis";
 import { supabaseAdmin } from "../config/supabase";
+import { currentIndiaMonthStart, currentIndiaWeekStart, todayIndia } from "../utils/date";
 import type { Team, TeamType } from "../types";
 
 type LeaderboardPeriod = "week" | "month" | "alltime";
@@ -99,7 +100,7 @@ export async function getLeaderboard(
 ) {
   await verifyMembership(userId, teamId);
   const cacheKey = `team:${teamId}:leaderboard:${period}`;
-  const cached = redisEnabled && redis ? await redis.get(cacheKey) : null;
+  const cached = redisEnabled && redis ? await redis!.get(cacheKey) : null;
 
   if (cached) {
     return JSON.parse(cached) as {
@@ -140,7 +141,7 @@ export async function getLeaderboard(
   const payload = { period, leaderboard: ranked };
 
   if (redisEnabled && redis) {
-    await redis.set(cacheKey, JSON.stringify(payload), "EX", leaderboardCacheTtlSeconds);
+    await redis!.set(cacheKey, JSON.stringify(payload), "EX", leaderboardCacheTtlSeconds);
   }
 
   return payload;
@@ -304,7 +305,7 @@ async function getTeamMembersWithUsers(teamId: string): Promise<
 
 async function getActiveTeamChallenge(teamId: string) {
   const members = await getTeamMembersWithUsers(teamId);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayIndia();
   const memberIds = members.map((member) => member.user_id);
 
   if (memberIds.length === 0) {
@@ -378,17 +379,11 @@ function getPeriodStart(period: LeaderboardPeriod): string | undefined {
   if (period === "alltime") {
     return undefined;
   }
-
-  const date = new Date();
-
   if (period === "week") {
-    const daysSinceMonday = (date.getUTCDay() + 6) % 7;
-    date.setUTCDate(date.getUTCDate() - daysSinceMonday);
+    return currentIndiaWeekStart();
   } else {
-    date.setUTCDate(1);
+    return currentIndiaMonthStart();
   }
-
-  return date.toISOString().slice(0, 10);
 }
 
 async function clearTeamLeaderboardCache(teamId: string): Promise<void> {
@@ -397,9 +392,9 @@ async function clearTeamLeaderboardCache(teamId: string): Promise<void> {
   }
 
   await Promise.all([
-    redis.del(`team:${teamId}:leaderboard:week`),
-    redis.del(`team:${teamId}:leaderboard:month`),
-    redis.del(`team:${teamId}:leaderboard:alltime`)
+    redis!.del(`team:${teamId}:leaderboard:week`),
+    redis!.del(`team:${teamId}:leaderboard:month`),
+    redis!.del(`team:${teamId}:leaderboard:alltime`)
   ]);
 }
 

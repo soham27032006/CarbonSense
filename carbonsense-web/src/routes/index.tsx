@@ -1,21 +1,13 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { api } from "@/lib/api";
-import { supabase } from "@/lib/supabase";
 
 export const Route = createFileRoute("/")({
   ssr: false,
-  beforeLoad: async () => {
-    const { data } = await supabase.auth.getSession();
-    if (!data.session) {
-      throw redirect({ to: "/login" });
-    }
-    const { data: me } = await api.get<{
-      profile?: { onboarding_complete?: boolean | null };
-    }>("/auth/me");
-    if (me.profile?.onboarding_complete) {
-      throw redirect({ to: "/home" });
-    }
-    throw redirect({ to: "/onboarding" });
+  // Auth/routing for the root path is handled by AppGate in __root.tsx so the
+  // session can hydrate from Supabase storage before any redirect decision.
+  // This component intentionally renders nothing — the redirect happens via
+  // AppGate once the auth state is confirmed.
+  beforeLoad: () => {
+    throw redirect({ to: "/home" });
   },
   component: () => null,
 });

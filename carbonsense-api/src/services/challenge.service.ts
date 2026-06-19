@@ -2,6 +2,13 @@ import { supabaseAdmin } from "../config/supabase";
 import { addXP, checkAchievements } from "./gamification.service";
 import { incrementStreak } from "./streak.service";
 import { updateUserTeamStats } from "./team.service";
+import {
+  addDaysToDateString,
+  currentIndiaMonthStart,
+  daysAgoIndia,
+  formatIndiaDate,
+  todayIndia
+} from "../utils/date";
 import type {
   Achievement,
   CarbonCategory,
@@ -14,12 +21,18 @@ type ChallengeWithContext = Challenge & {
   emoji: string;
   assignment: UserChallenge;
   personalized_context: string;
+  why: string;
+  tips: string[];
+  equivalency: string;
+  participants_today: number;
+  streak_last_14: boolean[];
 };
 
 type ChallengeCompletionResult = {
   xp_earned: number;
   new_total_xp: number;
   streak_count: number;
+  is_streak_milestone: boolean;
   level_up: boolean;
   achievements_earned: Achievement[];
 };
@@ -32,31 +45,53 @@ const challengeEmojiByIcon: Record<string, string> = {
   lifestyle: "🌱"
 };
 
+const challengeEmojiOverrides: Record<string, string> = {
+  "walk or bike today": "🚲"
+};
+
 function getChallengeEmoji(challenge: Challenge): string {
+  const override = challengeEmojiOverrides[challenge.title.trim().toLowerCase()];
+  if (override) return override;
   return challengeEmojiByIcon[challenge.icon] ?? challengeEmojiByIcon[challenge.category] ?? "○";
 }
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function addDays(date: Date, days: number): Date {
-  const nextDate = new Date(date);
-  nextDate.setUTCDate(nextDate.getUTCDate() + days);
-  return nextDate;
-}
-
 export async function getTodayChallenge(
-  userId: string
+  userId: string,
+  altOffset = 0
 ): Promise<ChallengeWithContext> {
-  const today = todayIso();
+  const today = todayIndia();
   const existingAssignment = await getExistingTodayAssignment(userId, today);
 
-  if (existingAssignment && existingAssignment.status !== "skipped") {
+  if (existingAssignment && existingAssignment.status !== "skipped" && altOffset === 0) {
     return hydrateChallenge(existingAssignment, userId);
   }
 
-  return assignBestChallenge(userId, today, existingAssignment?.challenge_id);
+  const excludedIds = await getTodaysRejectedChallengeIds(userId, today, existingAssignment?.challenge_id);
+  return assignBestChallenge(userId, today, excludedIds, altOffset);
+}
+
+async function getTodaysRejectedChallengeIds(
+  userId: string,
+  dateAssigned: string,
+  initialExclude?: string
+): Promise<string[]> {
+  const { data, error } = await supabaseAdmin
+    .from("user_challenges")
+    .select("challenge_id")
+    .eq("user_id", userId)
+    .eq("date_assigned", dateAssigned)
+    .eq("status", "skipped");
+
+  if (error) {
+    return initialExclude ? [initialExclude] : [];
+  }
+
+  const ids = new Set<string>();
+  if (initialExclude) ids.add(initialExclude);
+  for (const row of data ?? []) {
+    if (row.challenge_id) ids.add(row.challenge_id);
+  }
+  return Array.from(ids);
 }
 
 export async function acceptChallenge(
@@ -95,12 +130,19 @@ export async function completeChallenge(
 
   const challenge = await getChallengeById(assignment.challenge_id);
 
+  const xpResult = await addXP(userId, challenge.xp_reward);
+  const streakResult = await incrementStreak(userId);
+
+  const baseXp = challenge.xp_reward;
+  const milestoneBonusXp = streakResult.milestone_bonus_xp ?? 0;
+  const xp_earned = baseXp + milestoneBonusXp;
+
   const { error: assignmentError } = await supabaseAdmin
     .from("user_challenges")
     .update({
       status: "completed",
       completed_at: new Date().toISOString(),
-      xp_earned: challenge.xp_reward
+      xp_earned
     })
     .eq("id", assignment.id);
 
@@ -108,8 +150,6 @@ export async function completeChallenge(
     throw new Error("Unable to complete challenge");
   }
 
-  const xpResult = await addXP(userId, challenge.xp_reward);
-  const streakResult = await incrementStreak(userId);
   await updateUserTeamStats(userId);
   const achievementsEarned = await checkAchievements(userId);
   const { data: updatedUser, error: updatedUserError } = await supabaseAdmin
@@ -123,9 +163,10 @@ export async function completeChallenge(
   }
 
   return {
-    xp_earned: challenge.xp_reward,
+    xp_earned,
     new_total_xp: updatedUser.xp,
     streak_count: streakResult.streak_count,
+    is_streak_milestone: streakResult.is_milestone,
     level_up: xpResult.level_up || updatedUser.level > xpResult.new_level,
     achievements_earned: achievementsEarned
   };
@@ -154,7 +195,7 @@ export async function skipChallenge(
     throw new Error("Unable to skip challenge");
   }
 
-  return assignBestChallenge(userId, todayIso(), assignment.challenge_id);
+  return assignBestChallenge(userId, todayIndia(), assignment.challenge_id);
 }
 
 export async function getChallengeHistory(
@@ -182,10 +223,14 @@ export async function getChallengeHistory(
   const challengesById = await getChallengesById(challengeIds);
 
   return {
-    challenges: (data ?? []).map((assignment) => ({
-      ...assignment,
-      challenge: challengesById.get(assignment.challenge_id) ?? null
-    })),
+    challenges: (data ?? []).map((assignment) => {
+      const challenge = challengesById.get(assignment.challenge_id) ?? null;
+      return {
+        ...assignment,
+        challenge,
+        carbon_saved_kg: challenge ? Number(challenge.carbon_save_kg) || 0 : 0
+      };
+    }),
     pagination: {
       page: safePage,
       limit: safeLimit,
@@ -220,8 +265,13 @@ export async function getChallengeLibrary() {
 async function assignBestChallenge(
   userId: string,
   dateAssigned: string,
-  excludedChallengeId?: string
+  excludedChallengeIds: string | string[] = [],
+  altOffset = 0
 ): Promise<ChallengeWithContext> {
+  const excluded = Array.isArray(excludedChallengeIds)
+    ? excludedChallengeIds
+    : [excludedChallengeIds];
+
   const [
     highestCategory,
     recentHistory,
@@ -238,8 +288,13 @@ async function assignBestChallenge(
     throw new Error("No active challenges available");
   }
 
-  const scoredChallenges = challenges
-    .filter((challenge) => challenge.id !== excludedChallengeId)
+  const eligibleChallenges = challenges.filter(
+    (challenge) => !excluded.includes(challenge.id)
+  );
+  const challengePool =
+    eligibleChallenges.length > 0 ? eligibleChallenges : challenges;
+
+  const scoredChallenges = challengePool
     .map((challenge) => ({
       challenge,
       score: scoreChallenge(
@@ -251,7 +306,7 @@ async function assignBestChallenge(
     }))
     .sort((left, right) => right.score - left.score);
 
-  const selectedChallenge = scoredChallenges[0]?.challenge;
+  const selectedChallenge = scoredChallenges[altOffset]?.challenge ?? scoredChallenges[0]?.challenge;
 
   if (!selectedChallenge) {
     throw new Error("No alternative challenges available");
@@ -272,14 +327,22 @@ async function assignBestChallenge(
     throw new Error("Unable to assign daily challenge");
   }
 
+  const carbonSaveKg = Number(selectedChallenge.carbon_save_kg);
+  const [participants, streakWindow] = await Promise.all([
+    countTodaysParticipants(selectedChallenge.id, dateAssigned),
+    loadStreakWindow(userId, dateAssigned)
+  ]);
+
   return {
     ...selectedChallenge,
     emoji: getChallengeEmoji(selectedChallenge),
     assignment,
-    personalized_context: buildPersonalizedContext(
-      highestCategory,
-      Number(selectedChallenge.carbon_save_kg)
-    )
+    personalized_context: buildPersonalizedContext(highestCategory, carbonSaveKg),
+    why: buildPersonalizedContext(highestCategory, carbonSaveKg),
+    tips: buildTips(selectedChallenge.category, selectedChallenge.tips),
+    equivalency: buildEquivalency(carbonSaveKg),
+    participants_today: participants,
+    streak_last_14: buildStreakLast14(streakWindow, dateAssigned)
   };
 }
 
@@ -321,14 +384,24 @@ async function hydrateChallenge(
     getHighestCarbonArea(userId)
   ]);
 
+  const carbonSaveKg = Number(challenge.carbon_save_kg);
+  const today = todayIndia();
+  const [participants, streakWindow] = await Promise.all([
+    countTodaysParticipants(challenge.id, today),
+    loadStreakWindow(userId, today)
+  ]);
+  const context = buildPersonalizedContext(highestCategory, carbonSaveKg);
+
   return {
     ...challenge,
     emoji: getChallengeEmoji(challenge),
     assignment,
-    personalized_context: buildPersonalizedContext(
-      highestCategory,
-      Number(challenge.carbon_save_kg)
-    )
+    personalized_context: context,
+    why: context,
+    tips: buildTips(challenge.category, challenge.tips),
+    equivalency: buildEquivalency(carbonSaveKg),
+    participants_today: participants,
+    streak_last_14: buildStreakLast14(streakWindow, today)
   };
 }
 
@@ -369,11 +442,21 @@ async function getUserChallengeAssignmentSafe(
   userId: string,
   challengeId: string
 ): Promise<UserChallenge | null> {
+  const todayAssignment = await getExistingTodayAssignment(userId, todayIndia());
+
+  if (
+    todayAssignment &&
+    (todayAssignment.id === challengeId || todayAssignment.challenge_id === challengeId)
+  ) {
+    return todayAssignment;
+  }
+
   const { data, error } = await supabaseAdmin
     .from("user_challenges")
     .select("*")
     .eq("user_id", userId)
     .eq("challenge_id", challengeId)
+    .eq("date_assigned", todayIndia())
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle<UserChallenge>();
@@ -395,7 +478,7 @@ async function resolveActionableAssignment(
     return exactAssignment;
   }
 
-  const todayAssignment = await getExistingTodayAssignment(userId, todayIso());
+  const todayAssignment = await getExistingTodayAssignment(userId, todayIndia());
 
   if (todayAssignment && todayAssignment.status !== "completed") {
     return todayAssignment;
@@ -436,9 +519,7 @@ async function getChallengesById(challengeIds: string[]): Promise<Map<string, Ch
 }
 
 async function getHighestCarbonArea(userId: string): Promise<CarbonCategory> {
-  const monthStart = new Date();
-  monthStart.setUTCDate(1);
-  const periodStart = monthStart.toISOString().slice(0, 10);
+  const periodStart = currentIndiaMonthStart();
 
   const { data: summary } = await supabaseAdmin
     .from("carbon_summaries")
@@ -532,10 +613,155 @@ function buildPersonalizedContext(
   return `Based on your spending, ${highestCategory} is your biggest carbon area. This could save you ${carbonSaveKg} kg today!`;
 }
 
+const TIPS_BY_CATEGORY: Record<string, string[]> = {
+  food: [
+    "Plan one plant-based meal this week",
+    "Swap one red-meat dinner for chicken or fish",
+    "Use up leftovers before buying more"
+  ],
+  transport: [
+    "Leave 5 minutes early so you can walk or bike",
+    "Combine errands into one trip",
+    "Try a car-free day on the weekend"
+  ],
+  home: [
+    "Drop your thermostat 1°C for the day",
+    "Run dish- and laundry loads only when full",
+    "Switch one light to LED if you haven't already"
+  ],
+  shopping: [
+    "Wait 24 hours before any non-essential buy",
+    "Borrow or rent instead of buying",
+    "Pick the smallest size that fits the need"
+  ],
+  lifestyle: [
+    "Pick the lower-carbon option for one decision today",
+    "Track what you bought and why",
+    "Try a no-spend day this week"
+  ],
+  travel: [
+    "Take the train for trips under 300 miles",
+    "Pack lighter — weight matters for fuel",
+    "Choose direct flights when you must fly"
+  ],
+  other: [
+    "Pick the lower-carbon option for one decision today",
+    "Track what you bought and why",
+    "Try a no-spend day this week"
+  ]
+};
+
+function buildTips(category: string, dbTips: string[] | null | undefined): string[] {
+  if (Array.isArray(dbTips) && dbTips.length > 0) return dbTips;
+  return TIPS_BY_CATEGORY[category] ?? TIPS_BY_CATEGORY.other;
+}
+
+function buildEquivalency(carbonSaveKg: number): string {
+  if (!Number.isFinite(carbonSaveKg) || carbonSaveKg <= 0) {
+    return "a small action that builds momentum";
+  }
+  const miles = Math.round(carbonSaveKg / 0.404);
+  return `about ${miles} miles not driven`;
+}
+
+function buildStreakLast14(
+  assignments: Array<{ date_assigned: string; status: string; completed_at?: string | null; created_at?: string }>,
+  today: string
+): boolean[] {
+  const istOffsetMs = 5.5 * 60 * 60 * 1000;
+
+  const completedDates = new Set<string>();
+  for (const row of assignments) {
+    if (row.status !== "completed" && row.status !== "accepted") continue;
+    const candidates = [
+      normalizeDateString(row.date_assigned),
+      row.completed_at
+        ? new Date(new Date(row.completed_at).getTime() + istOffsetMs)
+            .toISOString()
+            .slice(0, 10)
+        : "",
+      row.created_at
+        ? new Date(new Date(row.created_at).getTime() + istOffsetMs)
+            .toISOString()
+            .slice(0, 10)
+        : ""
+    ].filter((d) => d.length > 0);
+    for (const candidate of candidates) {
+      completedDates.add(candidate);
+    }
+  }
+
+  const result: boolean[] = [];
+  for (let i = 13; i >= 0; i -= 1) {
+    const dateStr = addDaysToDateString(today, -i);
+    result.push(completedDates.has(dateStr));
+  }
+  return result;
+}
+
+function normalizeDateString(value: string | null | undefined): string {
+  if (!value) return "";
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return formatIndiaDate(parsed);
+}
+
 function toChallengeCategoryForScoring(category: CarbonCategory): string {
   return category === "travel" || category === "other" ? "lifestyle" : category;
 }
 
+async function countTodaysParticipants(
+  challengeId: string,
+  today: string
+): Promise<number> {
+  const { count, error } = await supabaseAdmin
+    .from("user_challenges")
+    .select("id", { count: "exact", head: true })
+    .eq("challenge_id", challengeId)
+    .eq("date_assigned", today)
+    .in("status", ["accepted", "completed"]);
+
+  if (error) {
+    return 0;
+  }
+
+  return Number(count ?? 0);
+}
+
+async function loadStreakWindow(
+  userId: string,
+  today: string
+): Promise<
+  Array<{
+    date_assigned: string;
+    status: string;
+    completed_at: string | null;
+    created_at: string;
+  }>
+> {
+  const since = addDaysToDateString(today, -13);
+  const { data, error } = await supabaseAdmin
+    .from("user_challenges")
+    .select("date_assigned,status,completed_at,created_at")
+    .eq("user_id", userId)
+    .gte("date_assigned", since)
+    .lte("date_assigned", today);
+
+  if (error || !data) {
+    return [];
+  }
+
+  return data as Array<{
+    date_assigned: string;
+    status: string;
+    completed_at: string | null;
+    created_at: string;
+  }>;
+}
+
 function todayMinusDays(days: number): string {
-  return addDays(new Date(), -days).toISOString().slice(0, 10);
+  return daysAgoIndia(days);
 }

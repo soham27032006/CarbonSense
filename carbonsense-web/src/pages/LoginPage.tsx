@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, Navigate, useNavigate } from "@tanstack/react-router";
 import { motion } from "framer-motion";
 import toast from "react-hot-toast";
 import { Mail, Lock, ArrowRight, Loader2 } from "lucide-react";
@@ -7,6 +7,7 @@ import { AuthLayout } from "@/layouts/AuthLayout";
 import { Field, GoogleButton, Divider } from "@/components/AuthFormFields";
 import { api } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
+import { useAuthStore } from "@/stores/authStore";
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -14,15 +15,24 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const user = useAuthStore((s) => s.user);
 
-  async function routeAfterLogin() {
+  if (isAuthenticated) {
+    const target = user?.onboarding_complete ? "/home" : "/onboarding";
+    return <Navigate to={target} replace />;
+  }
+
+  async function routeAfterLogin(accessToken?: string) {
     const { data } = await api.get<{
       profile?: { onboarding_complete?: boolean | null };
-    }>("/auth/me");
+    }>("/auth/me", {
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+    });
     if (data.profile?.onboarding_complete) {
-      navigate({ to: "/home" });
+      await navigate({ to: "/home", replace: true });
     } else {
-      navigate({ to: "/onboarding" });
+      await navigate({ to: "/onboarding", replace: true });
     }
   }
 
@@ -40,7 +50,14 @@ export default function LoginPage() {
       return;
     }
     toast.success("Welcome back 🌿");
-    if (data.user) await routeAfterLogin();
+    if (data.user) {
+      try {
+        await routeAfterLogin(data.session?.access_token);
+      } catch (routeError) {
+        console.warn("[auth] Login succeeded but route hydration failed", routeError);
+        await navigate({ to: "/home", replace: true });
+      }
+    }
   }
 
   async function handleGoogle() {

@@ -4,18 +4,13 @@ import {
   checkAndResetStreak,
   regenerateStreakFreeze
 } from "../services/streak.service";
+import { yesterdayIndia } from "../utils/date";
 
 type DailyJobResult = {
   checked_streaks: number;
   refreshed_freezes: number;
   generated_summaries: number;
 };
-
-function yesterdayIso(): string {
-  const date = new Date();
-  date.setUTCDate(date.getUTCDate() - 1);
-  return date.toISOString().slice(0, 10);
-}
 
 export async function checkAllStreaks(): Promise<number> {
   const { data: users, error } = await supabaseAdmin
@@ -43,7 +38,7 @@ export async function refreshAllStreakFreezes(): Promise<number> {
 }
 
 export async function generateDailySummaries(): Promise<number> {
-  const summaryDate = yesterdayIso();
+  const summaryDate = yesterdayIndia();
   const { data: users, error } = await supabaseAdmin.from("users").select("id");
 
   if (error || !users) {

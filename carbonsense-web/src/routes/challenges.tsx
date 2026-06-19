@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useMotionValue, useTransform, animate } from "framer-motion";
 import {
@@ -10,14 +10,15 @@ import {
   Share2,
   Sparkles,
   Star,
-  Trophy,
   Users,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useUnits } from "@/contexts/UnitsContext";
 import { api } from "@/lib/api";
+import { useChallengeLibrary } from "@/hooks/useApi";
 import { useAuthStore } from "@/stores/authStore";
-import { convertCO2, formatCO2, getCO2Label, type UnitSystem } from "@/utils/units";
+import { StickyHeader } from "@/components/StickyHeader";
+import { convertCO2, formatCO2, getCO2Label, pluralize, pluralizeNoun, type UnitSystem } from "@/utils/units";
 
 export const Route = createFileRoute("/challenges")({
   ssr: false,
@@ -36,9 +37,14 @@ export const Route = createFileRoute("/challenges")({
 // ---------- types ----------
 type Status = "pending" | "accepted" | "completed" | "skipped";
 type LibCategory = "food" | "transport" | "home" | "shopping" | "lifestyle";
+type LibraryFilter = "all" | LibCategory;
 
 interface TodayChallenge {
   id: string;
+  assignment?: {
+    id: string;
+    status: Status;
+  };
   category: string;
   emoji: string;
   title: string;
@@ -61,7 +67,7 @@ interface HistoryItem {
   date: string;
   status: "completed" | "skipped" | "missed";
   xp_earned: number;
-  carbon_saved_kg: number;
+  savings_kg: number;
 }
 
 interface HistoryResponse {
@@ -69,9 +75,9 @@ interface HistoryResponse {
   total: number;
   has_more: boolean;
   summary: {
-    total_completed: number;
-    total_carbon_saved_kg: number;
-    total_xp_earned: number;
+    completed: number;
+    total: number;
+    carbon_saved_kg: number;
     completion_rate: number;
   };
   items: HistoryItem[];
@@ -89,10 +95,21 @@ interface LibItem {
 }
 
 const DIFF_COLOR: Record<string, string> = {
-  Easy: "bg-emerald-400/15 text-emerald-200 border-emerald-300/30",
-  Medium: "bg-amber-400/15 text-amber-200 border-amber-300/30",
-  Hard: "bg-rose-400/15 text-rose-200 border-rose-300/30",
+  easy: "bg-emerald-400/15 text-emerald-200 border-emerald-300/30",
+  medium: "bg-amber-400/15 text-amber-200 border-amber-300/30",
+  hard: "bg-rose-400/15 text-rose-200 border-rose-300/30",
 };
+
+function diffColorClass(difficulty: string | undefined): string {
+  const key = (difficulty ?? "").trim().toLowerCase();
+  return DIFF_COLOR[key] ?? "bg-white/10 text-muted-foreground border-white/10";
+}
+
+function formatDifficulty(difficulty: string | undefined): string {
+  const key = (difficulty ?? "").trim().toLowerCase();
+  if (!key) return "Unknown";
+  return key.charAt(0).toUpperCase() + key.slice(1);
+}
 
 const LIB_SECTIONS: { key: LibCategory; emoji: string; label: string }[] = [
   { key: "food", emoji: "🍽", label: "Food" },
@@ -115,11 +132,11 @@ function ChallengesPage() {
   const [tab, setTab] = useState<Tab>("today");
 
   return (
-    <main className="relative min-h-screen overflow-x-hidden bg-background text-foreground">
+    <main className="relative overflow-x-hidden bg-background text-foreground">
       <Ambient />
       <StickyHeader avatarName={firstName} />
 
-      <div className="relative z-10 mx-auto w-full max-w-2xl px-5 pb-28 pt-6 sm:px-8">
+      <div className="relative z-10 mx-auto w-full max-w-5xl px-5 pb-28 pt-6 sm:px-8">
         <motion.h1
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -135,7 +152,7 @@ function ChallengesPage() {
 
         <div className="mt-6">
           <AnimatePresence mode="wait">
-            {tab === "today" && <TodayTab key="today" />}
+            {tab === "today" && <TodayTab key="today" onBrowseLibrary={() => setTab("library")} />}
             {tab === "history" && <HistoryTab key="history" />}
             {tab === "library" && <LibraryTab key="library" />}
           </AnimatePresence>
@@ -181,26 +198,33 @@ function Tabs({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }) {
 }
 
 // ---------- TODAY ----------
-function TodayTab() {
+function TodayTab({ onBrowseLibrary }: { onBrowseLibrary: () => void }) {
   const { unitSystem } = useUnits();
   const [challenge, setChallenge] = useState<TodayChallenge | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>("pending");
   const [busy, setBusy] = useState(false);
   const [skipOpen, setSkipOpen] = useState(false);
   const [celebrate, setCelebrate] = useState(false);
+  const [celebrateXp, setCelebrateXp] = useState<number | null>(null);
+  const [celebrateLevelUp, setCelebrateLevelUp] = useState(false);
   const [altOffset, setAltOffset] = useState(0);
   const [swapDir, setSwapDir] = useState(0);
   const [tipsOpen, setTipsOpen] = useState(false);
 
   const load = async (alt = 0) => {
+    setLoadError(null);
     try {
       const { data } = await api.get<TodayChallenge>("/challenges/today", {
         params: { alt },
       });
       setChallenge(data);
+      setStatus(data.assignment?.status ?? "pending");
     } catch {
-      toast.error("Couldn't load today's challenge.");
+      setChallenge(null);
+      setLoadError("Couldn't load today's challenge.");
+      toast.error("Couldn't load today's challenge.", { id: "challenge-today-load-error" });
     } finally {
       setLoading(false);
     }
@@ -213,13 +237,18 @@ function TodayTab() {
 
   const accept = async () => {
     if (!challenge) return;
+    const assignmentId = challenge.assignment?.id;
+    if (!assignmentId) {
+      toast.error("Please refresh — could not find your assignment.");
+      return;
+    }
     setBusy(true);
     try {
-      await api.post(`/challenges/${challenge.id}/accept`, {});
+      await api.post(`/challenges/${assignmentId}/accept`, {});
       setStatus("accepted");
       toast.success("Challenge accepted — go get it.");
     } catch {
-      toast.error("Couldn't accept the challenge.");
+      toast.error("Couldn't accept the challenge.", { id: "challenge-accept-error" });
     } finally {
       setBusy(false);
     }
@@ -227,13 +256,27 @@ function TodayTab() {
 
   const complete = async () => {
     if (!challenge) return;
+    const assignmentId = challenge.assignment?.id;
+    if (!assignmentId) {
+      toast.error("Please refresh — could not find your assignment.");
+      return;
+    }
     setBusy(true);
     try {
-      await api.post(`/challenges/${challenge.id}/complete`, {});
+      const { data } = await api.post<{
+        xp_earned: number;
+        new_total_xp: number;
+        streak_count: number;
+        is_streak_milestone: boolean;
+        level_up: boolean;
+        achievements_earned: string[];
+      }>(`/challenges/${assignmentId}/complete`, {});
       setStatus("completed");
+      setCelebrateXp(typeof data?.xp_earned === "number" ? data.xp_earned : 0);
+      setCelebrateLevelUp(Boolean(data?.level_up));
       setCelebrate(true);
     } catch {
-      toast.error("Couldn't mark complete.");
+      toast.error("Couldn't mark complete.", { id: "challenge-complete-error" });
     } finally {
       setBusy(false);
     }
@@ -241,10 +284,16 @@ function TodayTab() {
 
   const skip = async (reason: string) => {
     if (!challenge) return;
+    const assignmentId = challenge.assignment?.id;
+    if (!assignmentId) {
+      toast.error("Please refresh — could not find your assignment.");
+      setSkipOpen(false);
+      return;
+    }
     setSkipOpen(false);
     setBusy(true);
     try {
-      await api.post(`/challenges/${challenge.id}/skip`, { reason });
+      await api.post(`/challenges/${assignmentId}/skip`, { reason });
       const next = altOffset + 1;
       setAltOffset(next);
       setSwapDir(1);
@@ -253,7 +302,7 @@ function TodayTab() {
       setStatus("pending");
       toast.success("Here's another one for you.");
     } catch {
-      toast.error("Couldn't skip the challenge.");
+      toast.error("Couldn't skip the challenge.", { id: "challenge-skip-error" });
     } finally {
       setBusy(false);
     }
@@ -269,10 +318,31 @@ function TodayTab() {
     );
   }
 
+  if (loadError) {
+    return (
+      <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-8 text-center">
+        <p className="text-base font-semibold">{loadError}</p>
+        <p className="mt-2 text-sm text-muted-foreground">
+          We'll only show a daily challenge after the backend returns one.
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            setLoading(true);
+            load(altOffset);
+          }}
+          className="mt-5 rounded-full bg-emerald-400 px-5 py-2 text-sm font-semibold text-emerald-950"
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
+
   if (!challenge) {
     return (
       <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-8 text-center text-sm text-muted-foreground">
-        No challenge today — enjoy your day off 🌿
+        No challenge has been assigned yet.
       </div>
     );
   }
@@ -300,9 +370,11 @@ function TodayTab() {
               status={status}
               busy={busy}
               unitSystem={unitSystem}
+              xpEarned={celebrateXp}
               onAccept={accept}
               onComplete={complete}
               onSkip={() => setSkipOpen(true)}
+              onBrowseLibrary={onBrowseLibrary}
             />
           </motion.div>
         </AnimatePresence>
@@ -327,6 +399,7 @@ function TodayTab() {
       <section className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04]">
         <button
           type="button"
+          aria-expanded={tipsOpen}
           onClick={() => setTipsOpen((v) => !v)}
           className="flex w-full items-center justify-between px-5 py-4 text-left"
         >
@@ -369,23 +442,33 @@ function TodayTab() {
 
       {/* others doing this */}
       <section className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] p-5">
-        <span className="flex -space-x-2">
-          {[0, 1, 2, 3, 4].map((i) => (
-            <motion.span
-              key={i}
-              initial={{ scale: 0, x: -8 }}
-              animate={{ scale: 1, x: 0 }}
-              transition={{ delay: 0.15 + i * 0.07, type: "spring", stiffness: 400, damping: 20 }}
-              className="grid h-8 w-8 place-items-center rounded-full border-2 border-background bg-gradient-to-br from-emerald-300 to-teal-400 text-xs"
-            >
-              {["🦊", "🐼", "🐧", "🦉", "🐝"][i]}
-            </motion.span>
-          ))}
-        </span>
+        {challenge.participants_today > 0 && (
+          <span className="flex -space-x-2">
+            {["🦊", "🐼", "🐧", "🦉", "🐝"]
+              .slice(0, Math.min(5, challenge.participants_today))
+              .map((emoji, i) => (
+                <motion.span
+                  key={i}
+                  initial={{ scale: 0, x: -8 }}
+                  animate={{ scale: 1, x: 0 }}
+                  transition={{ delay: 0.15 + i * 0.07, type: "spring", stiffness: 400, damping: 20 }}
+                  className="grid h-8 w-8 place-items-center rounded-full border-2 border-background bg-gradient-to-br from-emerald-300 to-teal-400 text-xs"
+                >
+                  {emoji}
+                </motion.span>
+              ))}
+          </span>
+        )}
         <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
           <Users className="h-4 w-4" />
-          <span className="font-semibold text-foreground">{challenge.participants_today}</span> others
-          doing this today
+          {challenge.participants_today === 0 ? (
+            <span className="font-semibold text-foreground">Be the first</span>
+          ) : (
+            <>
+              <span className="font-semibold text-foreground">{challenge.participants_today}</span>{" "}
+              {pluralize(challenge.participants_today, "other", "others")} doing this today
+            </>
+          )}
         </p>
       </section>
 
@@ -398,7 +481,12 @@ function TodayTab() {
       </AnimatePresence>
       <AnimatePresence>
         {celebrate && (
-          <Celebration challenge={challenge} onClose={() => setCelebrate(false)} />
+          <Celebration
+            challenge={challenge}
+            xpEarned={celebrateXp ?? challenge.xp_reward}
+            levelUp={celebrateLevelUp}
+            onClose={() => setCelebrate(false)}
+          />
         )}
       </AnimatePresence>
     </motion.div>
@@ -410,17 +498,21 @@ function FeaturedCard({
   status,
   busy,
   unitSystem,
+  xpEarned,
   onAccept,
   onComplete,
   onSkip,
+  onBrowseLibrary,
 }: {
   challenge: TodayChallenge;
   status: Status;
   busy: boolean;
   unitSystem: UnitSystem;
+  xpEarned: number | null;
   onAccept: () => void;
   onComplete: () => void;
   onSkip: () => void;
+  onBrowseLibrary: () => void;
 }) {
   return (
     <div className="relative overflow-hidden rounded-3xl border border-emerald-200/20 bg-gradient-to-br from-emerald-400/30 via-teal-400/20 to-sky-500/20 p-7 shadow-[0_30px_80px_-30px_rgba(16,185,129,0.6)] sm:p-9">
@@ -455,10 +547,19 @@ function FeaturedCard({
 
       <div className="relative mt-7">
         {status === "completed" ? (
-          <div className="flex w-full items-center justify-center gap-2 rounded-full bg-emerald-300/90 px-6 py-4 text-base font-semibold text-emerald-950">
-            <CheckCircle2 className="h-5 w-5" />
-            Completed! +{challenge.xp_reward} XP <Star className="h-4 w-4 fill-current" />
-          </div>
+          <>
+            <div className="flex w-full cursor-default items-center justify-center gap-2 rounded-full bg-emerald-300/90 px-6 py-4 text-base font-semibold text-emerald-950">
+              <CheckCircle2 className="h-5 w-5" />
+              Completed! +{xpEarned ?? challenge.xp_reward} XP <Star className="h-4 w-4 fill-current" />
+            </div>
+            <button
+              type="button"
+              onClick={onBrowseLibrary}
+              className="mt-3 block w-full py-2 text-center text-sm text-emerald-300 transition-colors hover:text-emerald-200"
+            >
+              Browse more challenges →
+            </button>
+          </>
         ) : status === "accepted" ? (
           <>
             <button
@@ -507,9 +608,9 @@ function StreakStrip({ days }: { days: boolean[] }) {
       <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
         Your challenge streak
       </p>
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: "repeat(14, minmax(0, 1fr))" }}>
         {days.map((done, i) => {
-          const isToday = i === days.length - 1;
+          const isToday = i === 13;
           return (
             <motion.span
               key={i}
@@ -518,7 +619,7 @@ function StreakStrip({ days }: { days: boolean[] }) {
               transition={{ delay: i * 0.03, type: "spring", stiffness: 400, damping: 22 }}
               title={isToday ? "Today" : done ? "Completed" : "Missed"}
               className={[
-                "h-6 w-6 rounded-full",
+                "mx-auto h-6 w-6 rounded-full",
                 isToday
                   ? "bg-amber-300 shadow-[0_0_12px_rgba(252,211,77,0.7)]"
                   : done
@@ -570,7 +671,7 @@ function HistoryTab() {
       setHasMore(data.has_more);
       setPage(p);
     } catch {
-      toast.error("Couldn't load history.");
+      toast.error("Couldn't load history.", { id: "challenge-history-load-error" });
     } finally {
       setLoading(false);
       setLoadingMore(false);
@@ -608,14 +709,13 @@ function HistoryTab() {
       {/* summary */}
       {summary && (
         <section className="grid grid-cols-2 gap-3">
-          <SummaryStat label="Completed" value={summary.total_completed} accent="text-emerald-300" />
+          <SummaryStat label="Completed" value={summary.completed} accent="text-emerald-300" />
           <SummaryStat
             label="Carbon saved"
-            value={convertCO2(summary.total_carbon_saved_kg, unitSystem)}
+            value={convertCO2(summary.carbon_saved_kg, unitSystem)}
             suffix={` ${getCO2Label(unitSystem)}`}
             accent="text-sky-300"
           />
-          <SummaryStat label="XP earned" value={summary.total_xp_earned} accent="text-fuchsia-300" />
           <SummaryStat
             label="Completion rate"
             value={summary.completion_rate}
@@ -716,10 +816,12 @@ const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
   completed: { label: "✅ Completed", cls: "bg-emerald-400/15 text-emerald-200" },
   skipped: { label: "⏭ Skipped", cls: "bg-white/10 text-muted-foreground" },
   missed: { label: "❌ Missed", cls: "bg-rose-400/10 text-rose-300/70" },
+  accepted: { label: "▶ Accepted", cls: "bg-sky-400/15 text-sky-200" },
+  pending: { label: "⏳ Pending", cls: "bg-white/10 text-muted-foreground" },
 };
 
 const FALLBACK_STATUS_BADGE = {
-  label: "In progress",
+  label: "Unknown",
   cls: "bg-white/10 text-muted-foreground",
 };
 
@@ -741,7 +843,7 @@ function HistoryRow({ item }: { item: HistoryItem }) {
         </span>
         {item.status === "completed" && (
           <span className="text-[11px] text-muted-foreground">
-            +{item.xp_earned} XP · {formatCO2(item.carbon_saved_kg, unitSystem)}
+            +{item.xp_earned} XP · {formatCO2(item.savings_kg, unitSystem)}
           </span>
         )}
       </div>
@@ -751,16 +853,12 @@ function HistoryRow({ item }: { item: HistoryItem }) {
 
 // ---------- LIBRARY ----------
 function LibraryTab() {
-  const [items, setItems] = useState<LibItem[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    api
-      .get<{ items: LibItem[] }>("/challenges/library")
-      .then(({ data }) => setItems(data.items))
-      .catch(() => toast.error("Couldn't load the library."))
-      .finally(() => setLoading(false));
-  }, []);
+  const [filter, setFilter] = useState<LibraryFilter>("all");
+  const libraryQuery = useChallengeLibrary();
+  const items = libraryQuery.data?.items ?? [];
+  const loading = libraryQuery.isLoading;
+  const hasError = libraryQuery.isError;
+  const visibleSections = LIB_SECTIONS.filter((section) => filter === "all" || section.key === filter);
 
   if (loading) {
     return (
@@ -772,6 +870,36 @@ function LibraryTab() {
     );
   }
 
+  if (hasError) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0 }}
+        className="rounded-2xl border border-white/10 bg-white/[0.04] p-6 text-center"
+      >
+        <p className="text-base font-semibold">Couldn't load the challenge library.</p>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Try again once the backend is reachable.
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            toast.dismiss("challenge-library-load-error");
+            libraryQuery.refetch().catch(() => {
+              toast.error("Couldn't load the library.", {
+                id: "challenge-library-load-error",
+              });
+            });
+          }}
+          className="mt-5 rounded-full bg-emerald-400 px-5 py-2 text-sm font-semibold text-emerald-950"
+        >
+          Retry
+        </button>
+      </motion.div>
+    );
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -779,19 +907,47 @@ function LibraryTab() {
       exit={{ opacity: 0 }}
       className="space-y-8"
     >
-      {LIB_SECTIONS.map((sec) => {
+      <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+        {[{ key: "all", label: "All" }, ...LIB_SECTIONS.map(({ key, label }) => ({ key, label }))].map(
+          (option) => {
+            const active = filter === option.key;
+            return (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => setFilter(option.key as LibraryFilter)}
+                className={[
+                  "flex-none rounded-full border px-3.5 py-1.5 text-xs font-medium transition",
+                  active
+                    ? "border-emerald-300/40 bg-emerald-400/15 text-emerald-200"
+                    : "border-white/10 bg-white/[0.04] text-muted-foreground hover:text-foreground",
+                ].join(" ")}
+              >
+                {option.label}
+              </button>
+            );
+          },
+        )}
+      </div>
+
+      {visibleSections.map((sec) => {
         const secItems = items.filter((it) => it.category === sec.key);
-        if (secItems.length === 0) return null;
         return (
           <div key={sec.key}>
             <h3 className="mb-3 flex items-center gap-2 text-base font-semibold">
               <span>{sec.emoji}</span> {sec.label}
             </h3>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {secItems.map((it) => (
-                <LibCard key={it.id} item={it} />
-              ))}
-            </div>
+            {secItems.length === 0 ? (
+              <p className="text-sm text-muted-foreground italic">
+                No challenges in this category yet.
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {secItems.map((it) => (
+                  <LibCard key={it.id} item={it} />
+                ))}
+              </div>
+            )}
           </div>
         );
       })}
@@ -808,9 +964,9 @@ function LibCard({ item }: { item: LibItem }) {
           {item.emoji}
         </span>
         <span
-          className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${DIFF_COLOR[item.difficulty]}`}
+          className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${diffColorClass(item.difficulty)}`}
         >
-          {item.difficulty}
+          {formatDifficulty(item.difficulty)}
         </span>
       </div>
       <p className="mt-3 text-sm font-semibold">{item.title}</p>
@@ -822,7 +978,6 @@ function LibCard({ item }: { item: LibItem }) {
         <span className="flex items-center gap-1 text-amber-300">
           <Star className="h-3 w-3" /> {item.xp_reward} XP
         </span>
-        <span className="ml-auto italic opacity-70">Coming up</span>
       </div>
     </div>
   );
@@ -831,9 +986,13 @@ function LibCard({ item }: { item: LibItem }) {
 // ---------- celebration ----------
 function Celebration({
   challenge,
+  xpEarned,
+  levelUp,
   onClose,
 }: {
   challenge: TodayChallenge;
+  xpEarned: number;
+  levelUp: boolean;
   onClose: () => void;
 }) {
   const { unitSystem } = useUnits();
@@ -878,16 +1037,18 @@ function Celebration({
         </motion.div>
         <h2 className="mt-4 text-2xl font-bold">Challenge Complete!</h2>
         <p className="mt-3 text-4xl font-extrabold text-emerald-300">
-          +<CountUp value={challenge.xp_reward} /> XP
+          +<CountUp value={xpEarned} /> XP
         </p>
+        {levelUp && (
+          <p className="mt-2 text-sm font-semibold text-amber-200">
+            ⭐ Level up!
+          </p>
+        )}
         <p className="mt-3 text-sm text-muted-foreground">
           You saved {formatCO2(challenge.savings_kg, unitSystem)} — {challenge.equivalency}.
         </p>
-        <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-amber-300/30 bg-amber-400/10 px-4 py-2 text-sm font-semibold text-amber-200">
-          🔥 13 day streak!
-        </div>
-        <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-fuchsia-300/30 bg-fuchsia-400/10 px-4 py-2 text-sm font-semibold text-fuchsia-200">
-          <Trophy className="h-4 w-4" /> New achievement: Week Warrior!
+        <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-emerald-300/30 bg-emerald-400/10 px-4 py-2 text-sm font-semibold text-emerald-200">
+          <Leaf className="h-4 w-4" /> Saved {formatCO2(challenge.savings_kg, unitSystem)}
         </div>
 
         <div className="mt-6 flex gap-2">
@@ -965,38 +1126,6 @@ function SkipSheet({
   );
 }
 
-// ---------- header ----------
-function StickyHeader({ avatarName }: { avatarName: string }) {
-  return (
-    <header className="sticky top-0 z-30 border-b border-white/5 bg-background/70 backdrop-blur-xl">
-      <div className="mx-auto flex h-14 w-full max-w-2xl items-center justify-between px-5 sm:px-8">
-        <Link to="/home" className="flex items-center gap-2 text-sm font-bold">
-          <span className="grid h-7 w-7 place-items-center rounded-lg bg-gradient-to-br from-emerald-400 to-teal-300 text-emerald-950">
-            ✦
-          </span>
-          <span className="tracking-tight">CarbonSense</span>
-        </Link>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            aria-label="Notifications"
-            className="relative grid h-9 w-9 place-items-center rounded-full border border-white/10 bg-white/5 transition hover:bg-white/10"
-          >
-            <Bell className="h-4 w-4" />
-            <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-emerald-300" />
-          </button>
-          <div
-            aria-label="Account"
-            className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 text-xs font-bold uppercase text-emerald-950"
-          >
-            {avatarName?.slice(0, 1) ?? "U"}
-          </div>
-        </div>
-      </div>
-    </header>
-  );
-}
-
 // ---------- bits ----------
 function Ambient() {
   return (
@@ -1010,7 +1139,9 @@ function Ambient() {
 function CountUp({ value, suffix }: { value: number; suffix?: string }) {
   const mv = useMotionValue(0);
   const integer = Number.isInteger(value);
-  const rounded = useTransform(mv, (v) => (integer ? Math.round(v).toString() : v.toFixed(1)));
+  const rounded = useTransform(mv, (v) =>
+    integer ? Math.round(v).toString() : v.toFixed(1),
+  );
   useEffect(() => {
     const controls = animate(mv, value, { duration: 1.1, ease: [0.22, 1, 0.36, 1] });
     return controls.stop;
@@ -1076,9 +1207,13 @@ function groupByWeek(items: HistoryItem[]): { label: string; items: HistoryItem[
   for (const it of items) {
     const d = new Date(it.date + "T00:00:00Z");
     const diffDays = Math.floor((now.getTime() - d.getTime()) / 86400000);
-    const week = Math.floor(diffDays / 7);
+    const week = Math.max(0, Math.floor(diffDays / 7));
     const label =
-      week === 0 ? "This week" : week === 1 ? "Last week" : `${week} weeks ago`;
+      week === 0
+        ? "This week"
+        : week === 1
+          ? "1 week ago"
+          : `${week} weeks ago`;
     if (!groups[label]) {
       groups[label] = [];
       order.push(label);

@@ -221,14 +221,36 @@ export async function me(req: Request, res: Response): Promise<void> {
     throw new AppError("Authentication required", 401, "AUTH_REQUIRED");
   }
 
-  const { data: profile, error } = await supabaseAdmin
+  let { data: profile, error } = await supabaseAdmin
     .from("users")
     .select("*")
     .eq("id", req.user.id)
-    .single<User>();
+    .maybeSingle<User>();
 
   if (error) {
-    throw new AppError(error.message, 404, "PROFILE_NOT_FOUND");
+    throw new AppError(error.message, 500, "PROFILE_LOOKUP_FAILED");
+  }
+
+  if (!profile) {
+    const fallbackEmail = req.user.email ?? "user@carbonsense.local";
+    const { data: createdProfile, error: createError } = await supabaseAdmin
+      .from("users")
+      .insert({
+        id: req.user.id,
+        email: fallbackEmail,
+        name:
+          ((req.user.user_metadata?.name as string | undefined) ??
+            (req.user.user_metadata?.full_name as string | undefined) ??
+            fallbackEmail.split("@")[0])
+      })
+      .select("*")
+      .single<User>();
+
+    if (createError || !createdProfile) {
+      throw new AppError("Unable to create profile", 500, "PROFILE_CREATE_FAILED");
+    }
+
+    profile = createdProfile;
   }
 
   res.status(200).json({

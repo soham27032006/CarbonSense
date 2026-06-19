@@ -7,6 +7,11 @@ export interface User {
   avatar_url?: string | null;
   onboarding_complete: boolean;
   created_at?: string;
+  /** Current streak count, hydrated from /profile on auth. Optional while
+   *  the auth listener is still hydrating or when the backend is unreachable. */
+  streak?: number;
+  level?: number;
+  level_name?: string;
 }
 
 export interface Transaction {

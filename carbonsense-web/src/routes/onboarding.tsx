@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion, useMotionValue, useTransform, animate } from "framer-motion";
 import { ArrowLeft, ArrowRight, Leaf, Loader2, Lock, Sparkles } from "lucide-react";
 import toast from "react-hot-toast";
@@ -96,6 +96,27 @@ function OnboardingPage() {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
+
+  useEffect(() => {
+    if (user?.onboarding_complete) {
+      void navigate({ to: "/home", replace: true });
+      return;
+    }
+
+    api
+      .get<{ profile?: { onboarding_complete?: boolean | null } }>("/auth/me")
+      .then(({ data }) => {
+        if (data.profile?.onboarding_complete) {
+          if (user) {
+            setUser({ ...user, onboarding_complete: true });
+          }
+          void navigate({ to: "/home", replace: true });
+        }
+      })
+      .catch(() => {
+        void navigate({ to: "/login", replace: true });
+      });
+  }, [navigate, setUser, user]);
 
   const goNext = () => {
     setDirection(1);

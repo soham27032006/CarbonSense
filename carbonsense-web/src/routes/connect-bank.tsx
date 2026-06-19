@@ -21,6 +21,7 @@ import {
 import toast from "react-hot-toast";
 import { usePlaidLink, type PlaidLinkOnSuccessMetadata } from "react-plaid-link";
 import { api } from "@/lib/api";
+import { StickyHeader } from "@/components/StickyHeader";
 
 export const Route = createFileRoute("/connect-bank")({
   ssr: false,
@@ -61,17 +62,6 @@ interface SyncResult {
 
 type Stage = "intro" | "linking" | "exchanging" | "syncing" | "done" | "error";
 
-const MOCK_INSTITUTIONS = [
-  { id: "ins_chase", name: "Chase", emoji: "🏦" },
-  { id: "ins_boa", name: "Bank of America", emoji: "🏛️" },
-  { id: "ins_wf", name: "Wells Fargo", emoji: "🐎" },
-  { id: "ins_citi", name: "Citi", emoji: "🏙️" },
-  { id: "ins_amex", name: "American Express", emoji: "💳" },
-  { id: "ins_capital_one", name: "Capital One", emoji: "🅒" },
-  { id: "ins_us_bank", name: "U.S. Bank", emoji: "🇺🇸" },
-  { id: "ins_pnc", name: "PNC Bank", emoji: "🟧" },
-];
-
 function ConnectBankPage() {
   const navigate = useNavigate();
   const [banks, setBanks] = useState<BankAccount[] | null>(null);
@@ -80,7 +70,6 @@ function ConnectBankPage() {
   const [institution, setInstitution] = useState<{ id: string; name: string; emoji?: string } | null>(null);
   const [sync, setSync] = useState<SyncResult | null>(null);
   const [linkToken, setLinkToken] = useState<string | null>(null);
-  const [mockPickerOpen, setMockPickerOpen] = useState(false);
 
   const loadBanks = async () => {
     try {
@@ -96,10 +85,6 @@ function ConnectBankPage() {
   }, []);
 
   const atLimit = (banks?.length ?? 0) >= FREE_TIER_LIMIT;
-
-  // ----- Plaid Link bootstrap -----
-  // We always request a link token. If the server marks it as mock, we open
-  // our own institution picker (no real Plaid creds available in dev).
   const startConnect = async () => {
     if (atLimit) {
       toast.error("Free tier limit reached. Upgrade to Pro for unlimited connections.");
@@ -111,21 +96,17 @@ function ConnectBankPage() {
       const { data } = await api.post<{ link_token: string; mock?: boolean }>(
         "/plaid/create-link-token",
       );
-      setLinkToken(data.link_token);
-      if (data.mock || data.link_token.startsWith("mock-")) {
-        setMockPickerOpen(true);
+      if (!data.link_token || data.mock) {
+        throw new Error("Plaid link is not available.");
       }
-      // Real Plaid Link auto-opens via the effect below.
+      setLinkToken(data.link_token);
     } catch {
-      setErrorMsg("Something went wrong connecting your bank. Please try again.");
+      setErrorMsg("Bank linking is unavailable right now. Please try again shortly.");
       setStage("error");
     }
   };
-
-  // react-plaid-link integration (real-mode). Safe to mount even with a mock
-  // token — we just never call .open() in mock mode.
   const plaid = usePlaidLink({
-    token: linkToken && !linkToken.startsWith("mock-") ? linkToken : null,
+    token: linkToken,
     onSuccess: async (public_token, metadata: PlaidLinkOnSuccessMetadata) => {
       await exchange(public_token, {
         id: metadata.institution?.institution_id ?? "ins_unknown",
@@ -134,7 +115,7 @@ function ConnectBankPage() {
     },
     onExit: (err) => {
       if (err) {
-        setErrorMsg("Something went wrong connecting your bank. Please try again.");
+        setErrorMsg("Bank linking is unavailable right now. Please try again shortly.");
         setStage("error");
       } else if (stage === "linking") {
         setStage("intro");
@@ -143,12 +124,7 @@ function ConnectBankPage() {
   });
 
   useEffect(() => {
-    if (
-      linkToken &&
-      !linkToken.startsWith("mock-") &&
-      plaid.ready &&
-      stage === "linking"
-    ) {
+    if (linkToken && plaid.ready && stage === "linking") {
       plaid.open();
     }
   }, [linkToken, plaid.ready, stage]);
@@ -195,17 +171,20 @@ function ConnectBankPage() {
     }
   };
 
-  // Mock picker → simulate Plaid success path.
-  const pickMockInstitution = async (inst: { id: string; name: string; emoji: string }) => {
-    setMockPickerOpen(false);
-    const publicToken = `mock-public-${Math.random().toString(36).slice(2, 12)}`;
-    await exchange(publicToken, inst);
-  };
-
   return (
     <main className="relative min-h-screen overflow-x-hidden bg-background text-foreground">
       <Ambient />
-      <TopBar />
+      <StickyHeader
+        left={
+          <Link
+            to="/profile"
+            className="flex items-center gap-2 text-sm font-medium text-muted-foreground transition hover:text-foreground"
+          >
+            <ArrowLeft className="h-4 w-4" /> Back
+          </Link>
+        }
+        center={<span className="text-sm font-bold tracking-tight">Connect Bank</span>}
+      />
 
       <div className="relative z-10 mx-auto w-full max-w-xl px-5 pb-28 pt-6 sm:px-8">
         {banks === null ? (
@@ -274,18 +253,6 @@ function ConnectBankPage() {
           </>
         )}
       </div>
-
-      <AnimatePresence>
-        {mockPickerOpen && (
-          <MockBankPicker
-            onClose={() => {
-              setMockPickerOpen(false);
-              setStage("intro");
-            }}
-            onPick={pickMockInstitution}
-          />
-        )}
-      </AnimatePresence>
     </main>
   );
 }
@@ -297,23 +264,6 @@ function Ambient() {
       <div className="absolute -top-32 left-1/2 h-[420px] w-[680px] -translate-x-1/2 rounded-full bg-emerald-400/15 blur-3xl" />
       <div className="absolute right-[-160px] top-1/3 h-[360px] w-[360px] rounded-full bg-teal-300/10 blur-3xl" />
     </div>
-  );
-}
-
-function TopBar() {
-  return (
-    <header className="sticky top-0 z-30 border-b border-white/5 bg-background/70 backdrop-blur-xl">
-      <div className="mx-auto flex h-14 w-full max-w-xl items-center justify-between px-5 sm:px-8">
-        <Link
-          to="/profile"
-          className="flex items-center gap-2 text-sm font-medium text-muted-foreground transition hover:text-foreground"
-        >
-          <ArrowLeft className="h-4 w-4" /> Back
-        </Link>
-        <span className="text-sm font-bold tracking-tight">Connect Bank</span>
-        <span className="w-12" />
-      </div>
-    </header>
   );
 }
 
@@ -627,88 +577,6 @@ function ErrorScreen({
   );
 }
 
-// Mock Plaid Link UI shown when no real PLAID_* keys are configured. Keeps
-// the entire flow demoable end-to-end without external creds.
-function MockBankPicker({
-  onClose,
-  onPick,
-}: {
-  onClose: () => void;
-  onPick: (inst: { id: string; name: string; emoji: string }) => void;
-}) {
-  const [query, setQuery] = useState("");
-  const filtered = MOCK_INSTITUTIONS.filter((i) =>
-    i.name.toLowerCase().includes(query.toLowerCase()),
-  );
 
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center"
-      onClick={onClose}
-    >
-      <motion.div
-        initial={{ y: 40, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        exit={{ y: 40, opacity: 0 }}
-        transition={{ type: "spring", stiffness: 320, damping: 30 }}
-        onClick={(e) => e.stopPropagation()}
-        className="relative w-full max-w-md rounded-t-3xl border border-white/10 bg-[oklch(0.22_0.035_180)] p-6 sm:rounded-3xl"
-      >
-        <button
-          onClick={onClose}
-          className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/5 text-muted-foreground transition hover:bg-white/10"
-        >
-          <X className="h-4 w-4" />
-        </button>
 
-        <div className="flex items-center gap-2">
-          <ShieldCheck className="h-5 w-5 text-emerald-300" />
-          <h3 className="text-base font-semibold">Select your bank</h3>
-        </div>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Sandbox mode — pick any institution to simulate a connection.
-        </p>
 
-        <div className="relative mt-4">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            autoFocus
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search 12,000+ institutions"
-            className="w-full rounded-xl border border-white/10 bg-white/[0.04] py-2.5 pl-9 pr-3 text-sm outline-none focus:border-emerald-300/50"
-          />
-        </div>
-
-        <ul className="mt-4 max-h-72 space-y-1.5 overflow-y-auto pr-1">
-          {filtered.map((i) => (
-            <li key={i.id}>
-              <button
-                onClick={() => onPick(i)}
-                className="flex w-full items-center gap-3 rounded-xl border border-white/10 bg-white/[0.04] p-3 text-left transition hover:border-emerald-300/40 hover:bg-white/[0.07]"
-              >
-                <div className="grid h-9 w-9 place-items-center rounded-lg bg-white/5 text-base">
-                  {i.emoji}
-                </div>
-                <span className="flex-1 text-sm font-semibold">{i.name}</span>
-                <ArrowRight className="h-4 w-4 text-muted-foreground" />
-              </button>
-            </li>
-          ))}
-          {filtered.length === 0 && (
-            <li className="py-8 text-center text-xs text-muted-foreground">
-              No match for "{query}"
-            </li>
-          )}
-        </ul>
-
-        <p className="mt-4 flex items-center justify-center gap-1.5 text-[11px] text-muted-foreground">
-          <Lock className="h-3 w-3" /> Encrypted by Plaid · 256-bit
-        </p>
-      </motion.div>
-    </motion.div>
-  );
-}

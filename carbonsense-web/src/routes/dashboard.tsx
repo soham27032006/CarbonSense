@@ -15,6 +15,7 @@ import {
   YAxis,
 } from "recharts";
 import {
+  AlertTriangle,
   ArrowDownRight,
   ArrowLeft,
   ArrowUpRight,
@@ -32,6 +33,7 @@ import {
   useTrends,
 } from "@/hooks/useApi";
 import { useUnits } from "@/contexts/UnitsContext";
+import { StickyHeader } from "@/components/StickyHeader";
 import { convertCO2, formatCO2, getCO2Label, type UnitSystem } from "@/utils/units";
 
 export const Route = createFileRoute("/dashboard")({
@@ -65,6 +67,11 @@ interface Dashboard {
     total_carbon_kg: number;
     vs_last_month_percent: number;
     daily_average_kg: number;
+    category_breakdown?: Record<Exclude<Category, "other">, number>;
+  };
+  this_year?: {
+    total_carbon_kg: number;
+    category_breakdown: Record<Exclude<Category, "other">, number>;
   };
 }
 
@@ -76,6 +83,7 @@ interface Trends {
   change_percent: number;
   total: number;
   average: number;
+  is_estimated?: boolean;
 }
 
 interface Transaction {
@@ -96,7 +104,9 @@ interface Compare {
   top_percent: number;
   vs_last_month_percent: number;
   improving: boolean;
-  message: string;
+  message?: string;
+  ranking_text?: string;
+  country?: string;
 }
 
 const CATEGORY_COLOR: Record<Category, string> = {
@@ -126,18 +136,20 @@ const CATEGORY_EMOJI: Record<Category, string> = {
 
 const COUNTRY_LABELS: Record<string, string> = {
   US: "United States",
+  USA: "United States",
   CA: "Canada",
   GB: "United Kingdom",
+  UK: "United Kingdom",
   AU: "Australia",
   DE: "Germany",
   FR: "France",
   IN: "India",
+  India: "India",
 };
 
 const PERIOD_TABS: { key: Period; label: string; range: number }[] = [
   { key: "weekly", label: "Week", range: 12 },
   { key: "monthly", label: "Month", range: 12 },
-  { key: "yearly", label: "Year", range: 5 },
 ];
 
 // ---------- page ----------
@@ -151,39 +163,50 @@ function DashboardPage() {
   const compareQuery = useComparison();
   const trendsQuery = useTrends(period, tab.range);
   const profileQuery = useProfile();
+  const profile = (profileQuery.data as any) ?? null;
   const dashboard = (dashboardQuery.data as Dashboard | null) ?? null;
   const transactions =
     ((transactionsQuery.data as { transactions?: Transaction[] } | null)?.transactions ?? []);
   const compare = (compareQuery.data as Compare | null) ?? null;
   const trends = (trendsQuery.data as Trends | null) ?? null;
-  const countryCode = String((profileQuery.data as any)?.settings?.country ?? "US").toUpperCase();
-  const countryLabel = COUNTRY_LABELS[countryCode] ?? countryCode;
+  const countryCode = String(profile?.settings?.country ?? "US").toUpperCase();
+  const countryLabel = compare?.country ?? COUNTRY_LABELS[countryCode] ?? countryCode;
 
   useEffect(() => {
-    if (dashboardQuery.isError || transactionsQuery.isError || compareQuery.isError) {
-      toast.error("Couldn't load your analytics.");
+    if (dashboardQuery.isError || transactionsQuery.isError || compareQuery.isError || trendsQuery.isError) {
+      toast.error("Some analytics are still syncing. Showing available data.", {
+        id: "dashboard-partial-data",
+      });
     }
-  }, [dashboardQuery.isError, transactionsQuery.isError, compareQuery.isError]);
+  }, [dashboardQuery.isError, transactionsQuery.isError, compareQuery.isError, trendsQuery.isError]);
 
-  useEffect(() => {
-    if (trendsQuery.isError) toast.error("Couldn't load trends.");
-  }, [trendsQuery.isError]);
-
-  const loading =
-    dashboardQuery.isLoading || transactionsQuery.isLoading || compareQuery.isLoading;
+  const loading = dashboardQuery.isLoading && !dashboard;
+  const dashboardError = dashboardQuery.isError && !dashboard;
   const trendLoading = trendsQuery.isLoading || trendsQuery.isFetching;
-  const ready = Boolean(dashboard && compare);
+  const ready = Boolean(dashboard);
+  const refetchDashboardPage = () => {
+    dashboardQuery.refetch();
+    transactionsQuery.refetch();
+    compareQuery.refetch();
+    trendsQuery.refetch();
+    profileQuery.refetch();
+  };
 
-  // Donut data scaled to the active period from the weekly breakdown shape.
+  // Donut data comes from real per-period category breakdowns the backend
+  // returns for each of week / month / year — never scaled or fabricated.
   const donut = useMemo(() => {
     if (!dashboard) return [];
-    const scale = period === "weekly" ? 1 : period === "monthly" ? 4.3 : 52;
-    const base = dashboard.this_week.category_breakdown;
+    const base =
+      period === "weekly"
+        ? dashboard.this_week?.category_breakdown ?? {}
+        : period === "monthly"
+          ? dashboard.this_month?.category_breakdown ?? {}
+          : dashboard.this_year?.category_breakdown ?? {};
     const totals = new Map<Category, number>();
     (Object.entries(base) as [Category, number][]).forEach(([key, value]) => {
       const category = key in CATEGORY_LABEL ? key : "other";
-      const scaled = Math.round(Number(value ?? 0) * scale * 10) / 10;
-      totals.set(category, Math.round(((totals.get(category) ?? 0) + scaled) * 10) / 10);
+      const rounded = Math.round(Number(value ?? 0) * 10) / 10;
+      totals.set(category, Math.round(((totals.get(category) ?? 0) + rounded) * 10) / 10);
     });
     return Array.from(totals.entries())
       .map(([key, value]) => ({ key, value }))
@@ -191,10 +214,17 @@ function DashboardPage() {
       .sort((a, b) => b.value - a.value);
   }, [dashboard, period]);
 
+  const donutPeriodLabel =
+    period === "weekly"
+      ? "This week"
+      : period === "monthly"
+        ? "This month"
+        : "This year";
+
   return (
-    <main className="relative min-h-screen overflow-x-hidden bg-background text-foreground">
+    <main className="relative overflow-x-hidden bg-background text-foreground">
       <Ambient />
-      <Header />
+      <StickyHeader left={<DashboardHeaderLeft />} center={<span className="text-sm font-bold tracking-tight">Carbon Dashboard</span>} />
 
       <motion.div
         initial={{ opacity: 0, y: 12 }}
@@ -202,8 +232,12 @@ function DashboardPage() {
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
         className="relative z-10 mx-auto w-full max-w-2xl px-5 pb-28 pt-6 sm:px-8"
       >
-        {loading || !ready ? (
+        {loading ? (
           <DashboardSkeleton />
+        ) : dashboardError ? (
+          <DashboardErrorState onRetry={refetchDashboardPage} />
+        ) : !ready ? (
+          <DashboardEmptyState onRetry={refetchDashboardPage} />
         ) : (
           <>
             <CarbonAgeHero
@@ -215,11 +249,13 @@ function DashboardPage() {
 
             <TrendChart trends={trends} loading={trendLoading} period={period} unitSystem={unitSystem} />
 
-            <CategoryBreakdown data={donut} unitSystem={unitSystem} />
+            <CategoryBreakdown data={donut} unitSystem={unitSystem} periodLabel={donutPeriodLabel} />
 
             <TopTransactions transactions={transactions} unitSystem={unitSystem} />
 
-            <ComparisonCard compare={compare!} unitSystem={unitSystem} countryLabel={countryLabel} />
+            {compare && (
+              <ComparisonCard compare={compare} unitSystem={unitSystem} countryLabel={countryLabel} />
+            )}
           </>
         )}
       </motion.div>
@@ -234,21 +270,55 @@ function DashboardPage() {
 }
 
 // ---------- header ----------
-function Header() {
+const DashboardHeaderLeft = () => (
+  <Link
+    to="/home"
+    className="flex items-center gap-2 text-sm font-medium text-muted-foreground transition hover:text-foreground"
+  >
+    <ArrowLeft className="h-4 w-4" />
+    Home
+  </Link>
+);
+
+function DashboardErrorState({ onRetry }: { onRetry: () => void }) {
   return (
-    <header className="sticky top-0 z-30 border-b border-white/5 bg-background/70 backdrop-blur-xl">
-      <div className="mx-auto flex h-14 w-full max-w-2xl items-center justify-between px-5 sm:px-8">
-        <Link
-          to="/home"
-          className="flex items-center gap-2 text-sm font-medium text-muted-foreground transition hover:text-foreground"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Home
-        </Link>
-        <span className="text-sm font-bold tracking-tight">Carbon Dashboard</span>
-        <span className="w-12" />
+    <div className="rounded-3xl border border-rose-300/20 bg-rose-400/10 p-6 text-center">
+      <div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-rose-400/15 text-rose-200">
+        <AlertTriangle className="h-6 w-6" />
       </div>
-    </header>
+      <h2 className="mt-4 text-lg font-semibold">Couldn't load your dashboard.</h2>
+      <p className="mt-2 text-sm text-muted-foreground">
+        The analytics API did not respond. Retry once the backend is reachable.
+      </p>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="mt-5 rounded-full bg-emerald-400 px-5 py-2 text-sm font-semibold text-emerald-950"
+      >
+        Try again
+      </button>
+    </div>
+  );
+}
+
+function DashboardEmptyState({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6 text-center">
+      <div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-white/5 text-emerald-200">
+        <Info className="h-6 w-6" />
+      </div>
+      <h2 className="mt-4 text-lg font-semibold">No dashboard data yet.</h2>
+      <p className="mt-2 text-sm text-muted-foreground">
+        Complete onboarding, finish a challenge, or connect a bank to start analytics.
+      </p>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="mt-5 rounded-full border border-white/10 bg-white/5 px-5 py-2 text-sm font-semibold text-foreground hover:bg-white/10"
+      >
+        Refresh
+      </button>
+    </div>
   );
 }
 
@@ -490,7 +560,14 @@ function TrendChart({
     <section className="mt-5 rounded-3xl border border-white/10 bg-white/[0.04] p-5">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-sm font-semibold">Footprint trend</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold">Footprint trend</h2>
+            {trends?.is_estimated && (
+              <span className="rounded-full border border-amber-300/30 bg-amber-400/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-amber-200">
+                Estimated
+              </span>
+            )}
+          </div>
           <p className="text-xs text-muted-foreground">{getCO2Label(unitSystem)} over time</p>
         </div>
         {trends && (
@@ -520,7 +597,7 @@ function TrendChart({
           >
             {trends && (
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={trends.points} margin={{ top: 8, right: 6, left: -18, bottom: 0 }}>
+                <ComposedChart data={trends.points} margin={{ top: 8, right: 6, left: -8, bottom: 0 }}>
                   <defs>
                     <linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="#34d399" stopOpacity={0.45} />
@@ -540,7 +617,8 @@ function TrendChart({
                     tick={{ fill: "rgba(255,255,255,0.5)", fontSize: 11 }}
                     axisLine={false}
                     tickLine={false}
-                    width={42}
+                    width={56}
+                    tickMargin={6}
                     tickFormatter={(value) => String(Math.round(convertCO2(Number(value), unitSystem)))}
                   />
                   <Tooltip content={<TrendTooltip unitSystem={unitSystem} />} cursor={{ stroke: "rgba(255,255,255,0.15)" }} />
@@ -599,92 +677,117 @@ function TrendChart({
 }
 
 // ---------- section 4: category breakdown ----------
-function CategoryBreakdown({ data, unitSystem }: { data: { key: Category; value: number }[]; unitSystem: UnitSystem }) {
+function CategoryBreakdown({ data, unitSystem, periodLabel }: { data: { key: Category; value: number }[]; unitSystem: UnitSystem; periodLabel: string }) {
   const navigate = useNavigate();
   const total = data.reduce((a, d) => a + d.value, 0) || 1;
+  const hasData = data.length > 0;
 
   return (
     <section className="mt-5 rounded-3xl border border-white/10 bg-white/[0.04] p-5">
       <h2 className="text-sm font-semibold">Category breakdown</h2>
-      <p className="text-xs text-muted-foreground">Tap a slice to see those transactions</p>
+      <p className="text-xs text-muted-foreground">
+        {hasData ? "Tap a slice to see those transactions" : "No spending recorded for this period yet"}
+      </p>
 
       <div className="mt-2 flex flex-col items-center gap-4 sm:flex-row sm:items-center">
         <div className="chart-wrap relative w-full max-w-[16rem] flex-none sm:max-w-[14rem] lg:max-w-[18rem]">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                data={data}
-                dataKey="value"
-                nameKey="key"
-                cx="50%"
-                cy="50%"
-                innerRadius={58}
-                outerRadius={88}
-                paddingAngle={2}
-                stroke="none"
-                animationDuration={900}
-                onClick={(d: any) =>
-                  navigate({ to: "/transactions", search: { category: d.key as Category } })
-                }
-              >
-                {data.map((d) => (
-                  <Cell
-                    key={d.key}
-                    fill={CATEGORY_COLOR[d.key]}
-                    className="cursor-pointer outline-none transition-opacity hover:opacity-80"
+          {hasData ? (
+            <>
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={data}
+                    dataKey="value"
+                    nameKey="key"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={58}
+                    outerRadius={88}
+                    paddingAngle={2}
+                    stroke="none"
+                    animationDuration={900}
+                    onClick={(d: any) =>
+                      navigate({ to: "/transactions", search: { category: d.key as Category } })
+                    }
+                  >
+                    {data.map((d) => (
+                      <Cell
+                        key={d.key}
+                        fill={CATEGORY_COLOR[d.key]}
+                        className="cursor-pointer outline-none transition-opacity hover:opacity-80"
+                      />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    content={({ active, payload }: any) =>
+                      active && payload?.length ? (
+                        <div className="rounded-lg border border-white/10 bg-popover/95 px-2.5 py-1.5 text-xs shadow-xl backdrop-blur">
+                          <span className="font-medium">
+                            {CATEGORY_LABEL[payload[0].payload.key as Category]}
+                          </span>
+                          : {formatCO2(Number(payload[0].value ?? 0), unitSystem)}
+                        </div>
+                      ) : null
+                    }
                   />
-                ))}
-              </Pie>
-              <Tooltip
-                content={({ active, payload }: any) =>
-                  active && payload?.length ? (
-                    <div className="rounded-lg border border-white/10 bg-popover/95 px-2.5 py-1.5 text-xs shadow-xl backdrop-blur">
-                      <span className="font-medium">
-                        {CATEGORY_LABEL[payload[0].payload.key as Category]}
-                      </span>
-                      : {formatCO2(Number(payload[0].value ?? 0), unitSystem)}
-                    </div>
-                  ) : null
-                }
-              />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="pointer-events-none absolute inset-0 grid place-items-center">
-            <div className="text-center">
-              <CountUp value={Math.round(convertCO2(total, unitSystem))} className="text-2xl font-bold tabular-nums" />
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{getCO2Label(unitSystem)}</p>
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="pointer-events-none absolute inset-0 grid place-items-center">
+                <div className="text-center">
+                  <CountUp value={Math.round(convertCO2(total, unitSystem))} className="text-2xl font-bold tabular-nums" />
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{getCO2Label(unitSystem)}</p>
+                  <p className="mt-0.5 text-[10px] text-muted-foreground/70">{periodLabel} estimate</p>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="grid h-[200px] place-items-center text-center text-sm text-muted-foreground">
+              <div>
+                <div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-white/5">
+                  <Info className="h-5 w-5 text-muted-foreground" />
+                </div>
+                <p className="mt-3 max-w-[14rem]">
+                  Connect a bank or log a transaction to see your category breakdown.
+                </p>
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-1">
-          {data.map((d, i) => {
-            const pct = Math.round((d.value / total) * 100);
-            return (
-              <motion.button
-                key={d.key}
-                type="button"
-                initial={{ opacity: 0, x: 8 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.2 + i * 0.07 }}
-                onClick={() =>
-                  navigate({ to: "/transactions", search: { category: d.key } })
-                }
-                className="flex items-center justify-between gap-2 rounded-xl px-2 py-1.5 text-left transition hover:bg-white/5"
-              >
-                <span className="flex items-center gap-2 text-sm">
-                  <span
-                    className="h-2.5 w-2.5 flex-none rounded-full"
-                    style={{ background: CATEGORY_COLOR[d.key] }}
-                  />
-                  {CATEGORY_LABEL[d.key]}
-                </span>
-                <span className="text-xs font-medium tabular-nums text-muted-foreground">
-                  {pct}%
-                </span>
-              </motion.button>
-            );
-          })}
+          {hasData ? (
+            data.map((d, i) => {
+              const pct = Math.round((d.value / total) * 100);
+              return (
+                <motion.button
+                  key={d.key}
+                  type="button"
+                  initial={{ opacity: 0, x: 8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.2 + i * 0.07 }}
+                  onClick={() =>
+                    navigate({ to: "/transactions", search: { category: d.key } })
+                  }
+                  className="flex items-center justify-between gap-2 rounded-xl px-2 py-1.5 text-left transition hover:bg-white/5"
+                >
+                  <span className="flex items-center gap-2 text-sm">
+                    <span
+                      className="h-2.5 w-2.5 flex-none rounded-full"
+                      style={{ background: CATEGORY_COLOR[d.key] }}
+                    />
+                    {CATEGORY_LABEL[d.key]}
+                  </span>
+                  <span className="text-xs font-medium tabular-nums text-muted-foreground">
+                    {pct}%
+                  </span>
+                </motion.button>
+              );
+            })
+          ) : (
+            <p className="col-span-2 rounded-xl border border-dashed border-white/10 bg-white/[0.02] px-3 py-4 text-center text-xs text-muted-foreground sm:col-span-1">
+              No category data yet.
+            </p>
+          )}
         </div>
       </div>
     </section>
@@ -725,7 +828,7 @@ function TransactionRow({ t, index, unitSystem }: { t: Transaction; index: numbe
       </div>
       <div className="text-right">
         <p className="text-sm font-semibold tabular-nums">
-          ${t.amount.toFixed(2)}
+          {t.currency} {t.amount.toFixed(2)}
         </p>
         <p className="mt-0.5 flex items-center justify-end gap-1 text-xs text-muted-foreground">
           <span
@@ -740,6 +843,7 @@ function TransactionRow({ t, index, unitSystem }: { t: Transaction; index: numbe
 }
 
 function TopTransactions({ transactions, unitSystem }: { transactions: Transaction[]; unitSystem: UnitSystem }) {
+  const hasData = transactions.length > 0;
   return (
     <section className="mt-5">
       <div className="flex items-center justify-between">
@@ -752,11 +856,29 @@ function TopTransactions({ transactions, unitSystem }: { transactions: Transacti
           See all <ChevronRight className="h-3.5 w-3.5" />
         </Link>
       </div>
-      <div className="mt-3 max-h-[28rem] space-y-2 overflow-y-auto pr-0.5">
-        {transactions.map((t, i) => (
-          <TransactionRow key={t.id} t={t} index={i} unitSystem={unitSystem} />
-        ))}
-      </div>
+      {hasData ? (
+        <div className="mt-3 max-h-[28rem] space-y-2 overflow-y-auto pr-0.5">
+          {transactions.map((t, i) => (
+            <TransactionRow key={t.id} t={t} index={i} unitSystem={unitSystem} />
+          ))}
+        </div>
+      ) : (
+        <div className="mt-3 rounded-2xl border border-dashed border-white/10 bg-white/[0.02] p-6 text-center">
+          <div className="mx-auto grid h-10 w-10 place-items-center rounded-full bg-white/5">
+            <Info className="h-5 w-5 text-muted-foreground" />
+          </div>
+          <p className="mt-3 text-sm font-medium">No transactions yet</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Connect a bank or log a transaction to see them here.
+          </p>
+          <Link
+            to="/connect-bank"
+            className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-emerald-400 to-teal-300 px-4 py-2 text-xs font-semibold text-emerald-950"
+          >
+            Connect a bank
+          </Link>
+        </div>
+      )}
     </section>
   );
 }
@@ -771,48 +893,113 @@ function ComparisonCard({
   unitSystem: UnitSystem;
   countryLabel: string;
 }) {
-  const max = compare.national_avg_kg * 1.05;
-  const pos = (v: number) => `${Math.min(100, (v / max) * 100)}%`;
+  const userVal = compare.user_monthly_kg;
+  const parisVal = compare.paris_target_kg;
+  const nationalVal = compare.national_avg_kg;
+
+  const maxVal =
+    Math.max(userVal, parisVal, nationalVal, 1) * 1.12;
+  const pos = (v: number) => `${Math.min(100, Math.max(0, (v / maxVal) * 100))}%`;
+
+  const userPercent = (userVal / maxVal) * 100;
+  const parisPercent = (parisVal / maxVal) * 100;
+  const nationalPercent = (nationalVal / maxVal) * 100;
+  const tooClose = Math.abs(userPercent - nationalPercent) < 15;
+  const userAboveParis = userPercent - parisPercent < 15 && userPercent - parisPercent > -15;
+
+  let userTone: "green" | "yellow" | "red";
+  if (userVal <= parisVal) userTone = "green";
+  else if (userVal <= nationalVal) userTone = "yellow";
+  else userTone = "red";
+
+  const userColor =
+    userTone === "green"
+      ? "#34d399"
+      : userTone === "yellow"
+        ? "#fbbf24"
+        : "#f87171";
+
+  const userLabelTop = tooClose || userAboveParis ? "-30px" : "28px";
 
   return (
-    <section className="mt-5 overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-emerald-500/12 via-teal-500/8 to-sky-500/12 p-5">
-      <h2 className="text-sm font-semibold">How you compare</h2>
-      <p className="mt-1 text-xs text-muted-foreground">Monthly footprint vs benchmarks</p>
-
-      <div className="relative mt-8 h-2 rounded-full bg-white/10">
-        <motion.div
-          initial={{ width: 0 }}
-          animate={{ width: pos(compare.user_monthly_kg) }}
-          transition={{ duration: 1.2, ease: [0.22, 1, 0.36, 1] }}
-          className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-emerald-400 to-teal-300"
-        />
-
-        {/* user marker */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1, left: pos(compare.user_monthly_kg) }}
-          transition={{ duration: 1.2, ease: [0.22, 1, 0.36, 1] }}
-          className="absolute -top-1.5 z-20 -translate-x-1/2"
-        >
-          <span className="grid h-5 w-5 -translate-y-px place-items-center rounded-full border-2 border-emerald-950 bg-emerald-300 text-[9px] font-bold text-emerald-950 shadow-lg">
-            ★
-          </span>
-          <span className="absolute left-1/2 top-6 -translate-x-1/2 whitespace-nowrap text-[10px] font-medium text-emerald-200">
-            You · {formatCO2(compare.user_monthly_kg, unitSystem)}
-          </span>
-        </motion.div>
-
-        {/* paris target marker */}
-        <Marker left={pos(compare.paris_target_kg)} color="#5eead4" label={`Paris ${formatCO2(compare.paris_target_kg, unitSystem)}`} up />
-        {/* national marker */}
-        <Marker left={pos(compare.national_avg_kg)} color="#f87171" label={`${countryLabel} avg ${formatCO2(compare.national_avg_kg, unitSystem)}`} />
+    <section className="mt-5 rounded-3xl border border-white/10 bg-gradient-to-br from-emerald-500/12 via-teal-500/8 to-sky-500/12 px-3 py-5 sm:px-5">
+      <div className="px-2">
+        <h2 className="text-sm font-semibold">How you compare</h2>
+        <p className="mt-1 text-xs text-muted-foreground">Monthly footprint vs benchmarks</p>
       </div>
 
-      <div className="mt-14 rounded-2xl bg-emerald-950/20 p-3">
+      <div className="relative mt-12 px-12 pb-20">
+        {/* bar track */}
+        <div className="relative h-2 rounded-full bg-white/10">
+          <motion.div
+            initial={{ width: 0 }}
+            animate={{ width: pos(userVal) }}
+            transition={{ duration: 1.2, ease: [0.22, 1, 0.36, 1] }}
+            className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-emerald-400 to-teal-300"
+          />
+
+          {/* paris target marker */}
+          <Marker
+            left={pos(parisVal)}
+            color="#5eead4"
+            label={`Paris ${formatCO2(parisVal, unitSystem)}`}
+            up
+            anchor={parisPercent < 8 ? "left" : parisPercent > 92 ? "right" : "center"}
+          />
+
+          {/* national avg marker */}
+          <Marker
+            left={pos(nationalVal)}
+            color="#fb7185"
+            label={`${countryLabel} avg ${formatCO2(nationalVal, unitSystem)}`}
+            anchor={nationalPercent < 8 ? "left" : nationalPercent > 92 ? "right" : "center"}
+          />
+
+          {/* user marker */}
+          <div
+            className="absolute z-20 -translate-x-1/2"
+            style={{ left: pos(userVal), top: -10 }}
+          >
+            <span
+              className="grid h-5 w-5 place-items-center rounded-full border-2 text-[9px] font-bold shadow-lg"
+              style={{
+                borderColor: userColor,
+                background: userColor,
+                color: "#0b1f1a"
+              }}
+            >
+              ★
+            </span>
+            <span
+              className="absolute left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md bg-black/40 px-1.5 py-0.5 text-[10px] font-medium backdrop-blur"
+              style={{ color: userColor, top: userLabelTop }}
+            >
+              You · {formatCO2(userVal, unitSystem)}
+            </span>
+          </div>
+        </div>
+
+        {userTone === "red" && (
+          <p className="mt-4 text-center text-[11px] font-medium text-rose-200/90">
+            You're above the {countryLabel} average — small swaps add up fast.
+          </p>
+        )}
+        {userTone === "yellow" && (
+          <p className="mt-4 text-center text-[11px] font-medium text-amber-200/90">
+            You're tracking near the {countryLabel} average — a few wins would beat it.
+          </p>
+        )}
+        {userTone === "green" && (
+          <p className="mt-4 text-center text-[11px] font-medium text-emerald-200/90">
+            Below Paris target — keep stacking wins.
+          </p>
+        )}
+      </div>
+
+      <div className="mt-2 rounded-2xl bg-emerald-950/20 p-3">
         <p className="text-sm font-semibold text-emerald-100">
-          You're in the top {compare.top_percent}% in {countryLabel}
+          {compare.ranking_text ?? `You're in the top ${compare.top_percent}% in ${countryLabel}`}
         </p>
-        <p className="mt-1 text-xs leading-relaxed text-emerald-50/80">{compare.message}</p>
       </div>
     </section>
   );
@@ -823,18 +1010,27 @@ function Marker({
   color,
   label,
   up,
+  anchor = "center",
 }: {
   left: string;
   color: string;
   label: string;
   up?: boolean;
+  anchor?: "left" | "center" | "right";
 }) {
+  const labelTransform =
+    anchor === "left"
+      ? "translate-x-0"
+      : anchor === "right"
+        ? "-translate-x-full"
+        : "-translate-x-1/2";
+
   return (
     <div className="absolute z-10 -translate-x-1/2" style={{ left, top: up ? -10 : 8 }}>
       <span className="block h-4 w-0.5" style={{ background: color }} />
       <span
-        className="absolute left-1/2 -translate-x-1/2 whitespace-nowrap text-[9px] font-medium"
-        style={{ color, top: up ? -14 : 18 }}
+        className={`absolute left-1/2 whitespace-nowrap rounded-md bg-black/40 px-1.5 py-0.5 text-[9px] font-medium backdrop-blur ${labelTransform}`}
+        style={{ color, top: up ? -16 : 18 }}
       >
         {label}
       </span>

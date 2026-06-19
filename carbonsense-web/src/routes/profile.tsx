@@ -32,9 +32,12 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useUnits } from "@/contexts/UnitsContext";
+import { StickyHeader } from "@/components/StickyHeader";
 import { api } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
-import { formatCO2 } from "@/utils/units";
+import { useAuthStore } from "@/stores/authStore";
+import { getLevelProgressFraction } from "@/lib/levels";
+import { formatCO2, pluralizeNoun } from "@/utils/units";
 
 export const Route = createFileRoute("/profile")({
   ssr: false,
@@ -213,7 +216,7 @@ function ProfilePageContent() {
         if (body.settings?.units) {
           setUnitSystem(previous.settings.units);
         }
-        toast.error(getApiErrorMessage(error, "Couldn't save change."));
+        toast.error(getApiErrorMessage(error, "Couldn't save change."), { id: "profile-save-error" });
       }
     }
   };
@@ -225,11 +228,14 @@ function ProfilePageContent() {
       setDisconnectTarget(null);
       load();
     } catch (error) {
-      toast.error(getApiErrorMessage(error, "Couldn't disconnect bank."));
+      toast.error(getApiErrorMessage(error, "Couldn't disconnect bank."), {
+        id: "profile-disconnect-error",
+      });
     }
   };
 
   const handleLogout = async () => {
+    useAuthStore.getState().reset();
     await supabase.auth.signOut();
     navigate({ to: "/login" });
   };
@@ -241,7 +247,9 @@ function ProfilePageContent() {
       toast.success("Account deleted. We're sorry to see you go 🌍");
       navigate({ to: "/login" });
     } catch (error) {
-      toast.error(getApiErrorMessage(error, "Couldn't delete account."));
+      toast.error(getApiErrorMessage(error, "Couldn't delete account."), {
+        id: "profile-delete-error",
+      });
       setDeleteOpen(false);
       throw error;
     }
@@ -249,7 +257,7 @@ function ProfilePageContent() {
 
   const handleExportData = () => {
     if (!profile) {
-      toast.error("Profile data is still loading.");
+      toast.error("Profile data is still loading.", { id: "profile-loading-error" });
       return;
     }
 
@@ -270,9 +278,9 @@ function ProfilePageContent() {
   };
 
   return (
-    <main className="relative min-h-screen overflow-x-hidden bg-background text-foreground">
+    <main className="relative overflow-x-hidden bg-background text-foreground">
       <Ambient />
-      <Header />
+      <StickyHeader left={<ProfileHeaderLeft />} center={<ProfileHeaderCenter />} />
 
       <div className="relative z-10 mx-auto w-full max-w-2xl px-5 pb-32 pt-6 sm:px-8">
         {isLoading ? (
@@ -392,7 +400,7 @@ class ProfilePageErrorBoundary extends Component<
       return (
         <main className="relative min-h-screen overflow-x-hidden bg-background text-foreground">
           <Ambient />
-          <Header />
+          <StickyHeader left={<ProfileHeaderLeft />} center={<ProfileHeaderCenter />} />
           <div className="relative z-10 mx-auto w-full max-w-2xl px-5 pb-32 pt-6 sm:px-8">
             <ProfileLoadError
               message="Something went wrong while rendering your profile."
@@ -503,19 +511,15 @@ function Ambient() {
   );
 }
 
-function Header() {
-  return (
-    <header className="sticky top-0 z-30 border-b border-white/5 bg-background/70 backdrop-blur-xl">
-      <div className="mx-auto flex h-14 w-full max-w-2xl items-center justify-between px-5 sm:px-8">
-        <Link to="/home" className="flex items-center gap-2 text-sm font-medium text-muted-foreground transition hover:text-foreground">
-          <ArrowLeft className="h-4 w-4" /> Home
-        </Link>
-        <span className="text-sm font-bold tracking-tight">Profile</span>
-        <span className="w-12" />
-      </div>
-    </header>
-  );
-}
+const ProfileHeaderLeft = () => (
+  <Link to="/home" className="flex items-center gap-2 text-sm font-medium text-muted-foreground transition hover:text-foreground">
+    <ArrowLeft className="h-4 w-4" /> Home
+  </Link>
+);
+
+const ProfileHeaderCenter = () => (
+  <span className="text-sm font-bold tracking-tight">Profile</span>
+);
 
 // ----- SECTION 1: Profile header -----
 function ProfileHeader({ profile, onEdit }: { profile: Profile; onEdit: () => void }) {
@@ -547,7 +551,9 @@ function ProfileHeader({ profile, onEdit }: { profile: Profile; onEdit: () => vo
             strokeWidth="4"
             strokeLinecap="round"
             strokeDasharray={2 * Math.PI * 46}
-            strokeDashoffset={2 * Math.PI * 46 * (1 - Math.min(1, profile.xp / profile.xp_to_next))}
+            strokeDashoffset={
+              2 * Math.PI * 46 * (1 - getLevelProgressFraction(profile.level, profile.xp))
+            }
             style={{ filter: `drop-shadow(0 0 6px ${color}88)` }}
           />
         </svg>
@@ -602,9 +608,7 @@ function StatsRow({ profile }: { profile: Profile }) {
     { icon: <Star className="h-4 w-4 text-amber-300" />, label: `${profile.xp.toLocaleString()} XP` },
     {
       icon: <Check className="h-4 w-4 text-emerald-300" />,
-      label: `${profile.challenges_completed} ${
-        profile.challenges_completed === 1 ? "challenge" : "challenges"
-      }`
+      label: pluralizeNoun(profile.challenges_completed, "challenge")
     },
     { icon: <Leaf className="h-4 w-4 text-teal-300" />, label: `${formatCO2(profile.carbon_saved_kg, unitSystem)} saved` },
   ];
@@ -1093,7 +1097,7 @@ function EditProfileModal({
       });
       onSaved(data);
     } catch {
-      toast.error("Couldn't update profile.");
+      toast.error("Couldn't update profile.", { id: "profile-update-error" });
     } finally {
       setBusy(false);
     }
@@ -1348,4 +1352,3 @@ function DeleteAccountModal({
     </ModalShell>
   );
 }
-

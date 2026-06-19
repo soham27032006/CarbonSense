@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { AnimatePresence } from "framer-motion";
 import { CopilotPanel } from "./CopilotPanel";
 import { CopilotFab } from "./CopilotFab";
@@ -17,16 +17,33 @@ export function useCopilot() {
   return c;
 }
 
-export function CopilotProvider({ children }: { children: ReactNode }) {
+/** Like `useCopilot`, but returns null when no provider is mounted. Lets
+ *  shared UI (e.g. the header sparkle button) degrade gracefully on routes
+ *  that render outside <CopilotProvider> rather than crashing. */
+export function useCopilotSafe() {
+  return useContext(Ctx);
+}
+
+export function CopilotProvider({
+  children,
+  enabled = true,
+}: {
+  children: ReactNode;
+  enabled?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const toggle = useCallback(() => setOpen((v) => !v), []);
+
+  useEffect(() => {
+    if (!enabled) setOpen(false);
+  }, [enabled]);
 
   return (
     <Ctx.Provider value={{ open, setOpen, toggle }}>
       {children}
-      <CopilotFab open={open} onToggle={toggle} hasInsight />
+      {enabled && <CopilotFab open={open} onToggle={toggle} hasInsight />}
       <AnimatePresence>
-        {open && <CopilotPanel onClose={() => setOpen(false)} />}
+        {enabled && open && <CopilotPanel onClose={() => setOpen(false)} />}
       </AnimatePresence>
     </Ctx.Provider>
   );

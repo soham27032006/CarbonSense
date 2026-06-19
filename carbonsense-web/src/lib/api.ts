@@ -1,7 +1,16 @@
 import axios, { type AxiosResponse } from "axios";
 import { supabase } from "./supabase";
+import { API_BASE } from "./api-base";
+import {
+  getLevelsCatalog,
+  getLevelName,
+  getLevelThreshold,
+  getNextLevelThreshold,
+  isLevelsCatalogReady,
+  type LevelEntry
+} from "./levels";
 
-const API_URL = import.meta.env.VITE_API_URL || "";
+const API_URL = API_BASE.replace(/\/api$/, "");
 
 const categoryIcon: Record<string, string> = {
   food: "🍔",
@@ -13,38 +22,9 @@ const categoryIcon: Record<string, string> = {
   other: "○",
 };
 
-const levelNames = [
-  "Carbon Curious",
-  "Carbon Aware",
-  "Carbon Conscious",
-  "Carbon Reducer",
-  "Carbon Champion",
-  "Carbon Hero",
-  "Carbon Warrior",
-  "Carbon Legend",
-  "Carbon Neutral Star",
-  "Climate Guardian",
-];
-
-const levelThresholds = [0, 100, 300, 600, 1000, 1500, 2200, 3000, 4000, 5500];
-
 function capitalize(value?: string) {
   if (!value) return "";
   return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-function getSocialProofCount(challengeId?: string) {
-  if (!challengeId) return 47;
-  const today = new Date().toISOString().slice(0, 10);
-  const seed = `${challengeId}:${today}`;
-  let hash = 0;
-
-  for (let i = 0; i < seed.length; i += 1) {
-    hash = (hash << 5) - hash + seed.charCodeAt(i);
-    hash |= 0;
-  }
-
-  return 47 + Math.abs(hash % 153);
 }
 
 function unwrapEnvelope(payload: unknown) {
@@ -60,45 +40,45 @@ function unwrapEnvelope(payload: unknown) {
 }
 
 function normalizeDashboard(data: any) {
-  if (!data || typeof data !== "object") {
-    return {
-      carbon_age: 0,
-      real_age: 0,
-      target_age: 4,
-      streak: {
-        current: 0,
-        max: 0,
-        freeze_available: 0,
-      },
-      this_week: {
-        total_carbon_kg: 0,
-        vs_last_week_percent: 0,
-        category_breakdown: {},
-      },
-      this_month: {
-        total_carbon_kg: 0,
-        vs_last_month_percent: 0,
-        daily_average_kg: 0,
-      },
-    };
-  }
+  const raw = data && typeof data === "object" ? data : null;
+
+  // Backend responses are commonly wrapped as: { success, data: { ... } }
+  const d = raw?.data && typeof raw.data === "object" ? raw.data : raw;
+
+  if (!d) return null;
+
+  const onboarding = d.onboarding_data ?? {};
+  const annualCarbonTons = Number(
+    onboarding.estimated_annual_tons ??
+      onboarding.annual_carbon_tons ??
+      onboarding.annual_co2 ??
+      0,
+  );
+  const realAge = Number(d.real_age ?? onboarding.biological_age ?? 0);
+  const targetAge = Number(
+    d.target_age ??
+      (annualCarbonTons > 0
+        ? Math.round(realAge + (4 - annualCarbonTons) * 2)
+        : realAge),
+  );
 
   return {
-    ...data,
-    real_age: data.real_age ?? data.carbon_age ?? 0,
-    target_age: data.target_age ?? 4,
+    ...d,
+    // Carbon Age is not the same as Real Age; avoid falling back to carbon_age.
+    real_age: realAge,
+    target_age: targetAge,
     streak: {
-      ...data.streak,
+      ...d.streak,
       freeze_available:
-        typeof data.streak?.freeze_available === "boolean"
-          ? data.streak.freeze_available
+        typeof d.streak?.freeze_available === "boolean"
+          ? d.streak.freeze_available
             ? 1
             : 0
-          : data.streak?.freeze_available ?? 0,
+          : d.streak?.freeze_available ?? 0,
     },
     this_week: {
-      ...data.this_week,
-      category_breakdown: data.this_week?.category_breakdown ?? {},
+      ...d.this_week,
+      category_breakdown: d.this_week?.category_breakdown ?? {},
     },
   };
 }
@@ -130,10 +110,7 @@ function normalizeChallenge(data: any) {
       challenge.personalized_context ??
       "Chosen from your recent carbon activity.",
     tips: challenge.tips ?? [],
-    participants_today:
-      Number(challenge.participants_today ?? 0) > 0
-        ? Number(challenge.participants_today)
-        : getSocialProofCount(challenge.id),
+    participants_today: Number(challenge.participants_today ?? 0),
     equivalency:
       challenge.equivalency ??
       (savings > 0
@@ -219,7 +196,10 @@ function normalizeOnboardingQuiz(data: any) {
 }
 
 function normalizeTransactions(data: any) {
-  const transactions = (data.transactions ?? []).map((transaction: any) => ({
+  const d = data && typeof data === "object" ? data : {};
+  const rows = d.transactions ?? [];
+
+  const transactions = rows.map((transaction: any) => ({
     ...transaction,
     merchant: transaction.merchant ?? transaction.merchant_name,
     category: transaction.category ?? transaction.carbon_category,
@@ -230,68 +210,113 @@ function normalizeTransactions(data: any) {
       categoryIcon.other,
   }));
 
+  const pagination = d.pagination ?? {};
+  const total = pagination.total ?? d.total ?? transactions.length ?? 0;
+  const page = pagination.page ?? d.page ?? 1;
+  const limit = pagination.limit ?? d.limit ?? 20;
+
   return {
-    ...data,
+    ...d,
     transactions,
+    total,
+    page,
+    limit,
     has_more:
-      data.has_more ??
-      (data.pagination
-        ? data.pagination.page < data.pagination.total_pages
+      d.has_more ??
+      (pagination
+        ? pagination.page < pagination.total_pages
         : false),
   };
 }
 
 function normalizeTrends(data: any) {
-  const points = (data.trends ?? data.points ?? []).map((point: any) => ({
-    ...point,
-    date: point.date ?? point.period_start,
-    kg: point.kg ?? point.total_kg,
-    total: point.total ?? point.total_kg,
-  }));
+  const raw = data && typeof data === "object" ? data : null;
+
+  // Backend responses are commonly wrapped as: { success, data: { ... } }
+  const d = raw?.data && typeof raw.data === "object" ? raw.data : raw;
+  if (!d) return null;
+
+  // Backend returns points[] directly with { label, value, previous, period_start }.
+  const rawPoints: any[] = Array.isArray(d.points)
+    ? d.points
+    : Array.isArray(d.trends)
+      ? d.trends
+      : [];
+
+  // dashboard.tsx Recharts expects: { label, value, previous }
+  const points = (rawPoints as any[]).map((point: any, idx: number, arr: any[]) => {
+    const value = Number(point.value ?? point.total_kg ?? point.kg ?? 0);
+
+    let previous = Number(point.previous);
+    if (!Number.isFinite(previous)) {
+      const prior = idx > 0 ? arr[idx - 1] : null;
+      previous = prior
+        ? Number(prior.value ?? prior.total_kg ?? prior.kg ?? value)
+        : value;
+    }
+
+    return {
+      ...point,
+      label: point.label ?? point.period_start ?? point.date ?? String(idx),
+      value,
+      previous,
+    };
+  });
 
   const total = points.reduce(
-    (sum: number, point: any) => sum + Number(point.kg ?? point.total ?? 0),
+    (sum: number, p: any) => sum + Number(p.value ?? 0),
     0,
   );
 
   return {
-    ...data,
+    ...d,
     points,
-    change_percent: data.change_percent ?? data.overall_change_percent ?? 0,
-    total: data.total ?? total,
-    average: data.average ?? (points.length ? total / points.length : 0),
-    unit: data.unit ?? "kg",
+    change_percent: Number(d.change_percent ?? d.overall_change_percent ?? 0),
+    total: Number(d.total ?? Math.round(total * 100) / 100),
+    average: Number(d.average ?? (points.length ? Math.round((total / points.length) * 100) / 100 : 0)),
+    unit: d.unit ?? "kg",
+    is_estimated: Boolean(d.is_estimated)
   };
 }
 
 function normalizeCompare(data: any) {
-  if (!data || typeof data !== "object") {
-    return {
-      user_monthly_kg: 0,
-      national_avg_kg: 1333,
-      city_avg_kg: 1333,
-      paris_target_kg: 333,
-      better_than_percent: 0,
-      top_percent: 0,
-      vs_last_month_percent: 0,
-      improving: true,
-      message: "Comparison data will appear once more activity is available.",
-    };
-  }
+  if (!data || typeof data !== "object") return null;
+
+  const d = data?.data && typeof data.data === "object" ? data.data : data;
+
+  const userMonthlyKg = Number(d.user_monthly_kg ?? 0);
+  const vsLastMonthPercent = Number(d.vs_last_month_percent ?? 0);
+
+  const current = userMonthlyKg;
+  const previous =
+    vsLastMonthPercent !== 0 ? current / (1 + vsLastMonthPercent / 100) : current;
+
+  const percentile = Number(d.percentile ?? d.top_percent ?? d.better_than_percent ?? 0);
 
   return {
-    ...data,
-    national_avg_kg: data.national_avg_kg ?? data.national_average_kg,
-    city_avg_kg: data.city_avg_kg ?? data.city_average_kg,
-    paris_target_kg: data.paris_target_kg ?? 333,
-    better_than_percent: data.better_than_percent ?? data.percentile ?? 0,
-    top_percent: data.top_percent ?? data.percentile ?? 0,
-    improving: data.improving ?? (data.vs_last_month_percent ?? 0) <= 0,
-    message: data.message ?? data.ranking_text,
+    ...d,
+    // time-comparison fields expected by dashboard (safe even if we can't fully reconstruct)
+    current,
+    previous,
+    delta: current - previous,
+    percentChange: vsLastMonthPercent,
+
+    // peer comparison fields expected by dashboard components
+    national_avg_kg: Number(d.national_average_kg ?? d.national_avg_kg ?? 0),
+    city_avg_kg: Number(d.city_average_kg ?? d.city_avg_kg ?? 0),
+    paris_target_kg: Number(d.paris_target_kg ?? 0),
+
+    better_than_percent: Number(d.better_than_percent ?? percentile ?? 0),
+    top_percent: Number(d.top_percent ?? percentile ?? 0),
+    vs_last_month_percent: vsLastMonthPercent,
+    improving: d.improving ?? vsLastMonthPercent <= 0,
+    message: d.message ?? d.ranking_text ?? "",
   };
 }
 
 function normalizeImpactTotal(data: any) {
+  if (!data || typeof data !== "object") return null;
+
   return {
     ...data,
     carbon_saved_kg:
@@ -309,6 +334,7 @@ function normalizeImpactTotal(data: any) {
 }
 
 function normalizeEquivalencies(data: any) {
+  if (!data || typeof data !== "object") return null;
   if (Array.isArray(data.items)) return data;
 
   const equivalencies = data.equivalencies ?? {};
@@ -324,46 +350,78 @@ function normalizeEquivalencies(data: any) {
 }
 
 function normalizeLevel(data: any) {
+  if (!data || typeof data !== "object") return null;
   if (data.current) return data;
 
   const currentLevel = Number(data.level ?? 1);
-  const currentIndex = Math.max(0, currentLevel - 1);
-  const nextLevel = Math.min(levelNames.length, currentLevel + 1);
+  const catalogReady = isLevelsCatalogReady();
+  const catalog = catalogReady ? getLevelsCatalog() : [];
   const xp = Number(data.xp ?? 0);
-  const currentRequired = levelThresholds[currentIndex] ?? 0;
+  const currentRequired = catalogReady ? getLevelThreshold(currentLevel) : 0;
+  const currentName =
+    data.level_name ?? (catalogReady ? getLevelName(currentLevel) : "");
+  const isMaxLevel = catalogReady && currentLevel >= catalog.length;
 
   return {
     ...data,
     current: {
       level: currentLevel,
-      name: data.level_name ?? levelNames[currentIndex] ?? levelNames[0],
+      name: currentName,
       xp_required: currentRequired,
-      icon: String(currentLevel),
+      icon: "🌿",
     },
-    next:
-      currentLevel < levelNames.length
-        ? {
-            level: nextLevel,
-            name: levelNames[nextLevel - 1],
-            xp_required: levelThresholds[nextLevel - 1],
-            icon: String(nextLevel),
-          }
-        : null,
+    next: !isMaxLevel
+      ? {
+          level: currentLevel + 1,
+          name: catalogReady ? getLevelName(currentLevel + 1) : "",
+          xp_required: catalogReady ? getLevelThreshold(currentLevel + 1) : 0,
+          icon: "🌿",
+        }
+      : null,
     xp_into_current: Math.max(0, xp - currentRequired),
     xp_to_next: data.xp_to_next ?? 0,
-    levels: levelNames.map((name, index) => ({
-      level: index + 1,
-      name,
-      xp_required: levelThresholds[index],
-      icon: String(index + 1),
+    levels: catalog.map((entry: LevelEntry) => ({
+      level: entry.level,
+      name: entry.name,
+      xp_required: entry.xp_required,
+      icon: "🌿",
     })),
   };
 }
 
+const ACHIEVEMENT_ICON_EMOJI: Record<string, string> = {
+  footprints: "👣",
+  flame: "🔥",
+  "calendar-days": "📅",
+  "calendar-check": "✅",
+  "badge-cent": "💯",
+  trophy: "🏆",
+  "badge-check": "🎖️",
+  medal: "🏅",
+  award: "🏅",
+  crown: "👑",
+  leaf: "🍃",
+  "tree-pine": "🌲",
+  scale: "⚖️",
+  trees: "🌳",
+  star: "⭐",
+  sparkles: "✨",
+  users: "👥",
+  send: "📨",
+  landmark: "🏛️",
+  bot: "🤖"
+};
+
+function achievementIconToEmoji(icon: unknown): string {
+  if (typeof icon !== "string" || icon.length === 0) return "🏆";
+  return ACHIEVEMENT_ICON_EMOJI[icon] ?? "🏆";
+}
+
 function normalizeAchievements(data: any) {
+  if (!data || typeof data !== "object") return null;
   const achievements = (data.achievements ?? []).map((achievement: any) => ({
     ...achievement,
-    emoji: achievement.emoji ?? "🏆",
+    emoji: achievement.emoji ?? achievementIconToEmoji(achievement.icon),
     earned: achievement.earned ?? Boolean(achievement.earned_at),
   }));
 
@@ -440,13 +498,15 @@ function normalizeCountry(value: unknown): string {
 }
 
 function normalizeProfile(data: any) {
+  if (!data || typeof data !== "object") return null;
   const onboarding = data.onboarding_data ?? {};
   const notificationPreferences = data.notification_preferences ?? {};
   const currentLevel = Number(data.level ?? 1);
   const xp = Number(data.xp ?? 0);
-  const nextThreshold =
-    levelThresholds[Math.min(currentLevel, levelThresholds.length - 1)] ??
-    Math.max(xp + 100, 100);
+  const catalogReady = isLevelsCatalogReady();
+  const nextThreshold = catalogReady
+    ? getNextLevelThreshold(currentLevel)
+    : Math.max(xp + 100, 100);
   const xpToNext = Math.max(1, nextThreshold - xp);
   const bankAccounts = (data.bank_accounts ?? data.bank_connections ?? []).map(
     (bank: any) => ({
@@ -471,7 +531,7 @@ function normalizeProfile(data: any) {
     xp_to_next: data.xp_to_next ?? xpToNext,
     streak: data.streak ?? data.streak_count ?? 0,
     max_streak: data.max_streak ?? data.streak_max ?? data.streak_count ?? 0,
-    real_age: data.real_age ?? onboarding.biological_age ?? 25,
+    real_age: data.real_age ?? onboarding.biological_age ?? 0,
     challenges_completed: data.challenges_completed ?? 0,
     carbon_saved_kg: data.carbon_saved_kg ?? 0,
     bank_accounts: bankAccounts,
@@ -506,7 +566,8 @@ function normalizeResponse(response: AxiosResponse) {
 }
 
 export const api = axios.create({
-  baseURL: `${API_URL}/api`,
+  baseURL: API_BASE,
+  timeout: 10000,
   headers: {
     "Content-Type": "application/json",
     "Cache-Control": "no-cache",
@@ -515,12 +576,44 @@ export const api = axios.create({
 });
 
 api.interceptors.request.use(async (config) => {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+  let token: string | null = null;
 
-  if (session?.access_token) {
-    config.headers.Authorization = `Bearer ${session.access_token}`;
+  // Try Supabase session first
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.access_token) {
+      token = session.access_token;
+    }
+  } catch {
+    // ignore — fall through to localStorage fallback
+  }
+
+  // Fallback: read directly from localStorage. Supabase stores its session
+  // under a key like `sb-<project-ref>-auth-token`. Some app rebuilds cause
+  // getSession() to return null even though the token is still on disk.
+  if (!token && typeof window !== "undefined") {
+    try {
+      const storageKey = Object.keys(window.localStorage).find((k) =>
+        k.includes("auth-token")
+      );
+      if (storageKey) {
+        const raw = window.localStorage.getItem(storageKey);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          token =
+            parsed?.access_token ??
+            parsed?.currentSession?.access_token ??
+            parsed?.session?.access_token ??
+            null;
+        }
+      }
+    } catch {
+      token = null;
+    }
+  }
+
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
   }
 
   return config;
@@ -531,7 +624,11 @@ api.interceptors.response.use(
   async (error) => {
     if (error.response?.status === 401) {
       await supabase.auth.signOut();
-      window.location.href = "/login";
+      const { useAuthStore } = await import("@/stores/authStore");
+      useAuthStore.getState().reset();
+      if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+        window.location.assign("/login");
+      }
     }
 
     return Promise.reject(error);

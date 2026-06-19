@@ -8,9 +8,10 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { Toaster } from "react-hot-toast";
-import { BarChart3, Home, Leaf, Trophy, UserCircle } from "lucide-react";
+import { BarChart3, Home, Leaf, Trophy, UserCircle, X } from "lucide-react";
 
 import appCss from "../styles.css?url";
 import responsiveCss from "../styles/responsive.css?url";
@@ -19,7 +20,10 @@ import { useAuthListener } from "@/hooks/useAuthListener";
 import { CopilotProvider } from "@/components/copilot/CopilotProvider";
 import { AppGate } from "@/components/AppGate";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { MobileNavProvider } from "@/components/MobileNavContext";
 import { UnitsProvider } from "@/contexts/UnitsContext";
+import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
+import { loadLevelsCatalog } from "@/lib/levels";
 
 function NotFoundComponent() {
   return (
@@ -56,7 +60,6 @@ function NotFoundComponent() {
 }
 
 function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
-  console.error(error);
   const router = useRouter();
   useEffect(() => {
     reportLovableError(error, { boundary: "tanstack_root_error_component" });
@@ -154,30 +157,62 @@ function RootComponent() {
   const { queryClient } = Route.useRouteContext();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   useAuthListener();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  useEffect(() => {
+    loadLevelsCatalog().catch((error) => {
+      console.warn("Levels catalog unavailable; level UI will use placeholders.", error);
+    });
+  }, []);
+
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [pathname]);
+
+  useBodyScrollLock(mobileNavOpen);
+
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMobileNavOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [mobileNavOpen]);
+
   const showAppNav = !["/", "/login", "/signup", "/onboarding", "/auth/callback"].includes(pathname);
 
   return (
     <QueryClientProvider client={queryClient}>
       <UnitsProvider>
         <AppGate>
-          {showAppNav ? (
-            <CopilotProvider>
-            <div className={showAppNav ? "app-layout" : "min-h-dvh"}>
-              {showAppNav && <DesktopSidebarNav pathname={pathname} />}
+          <CopilotProvider enabled={showAppNav}>
+            {showAppNav ? (
+              <MobileNavProvider openMobileNav={() => setMobileNavOpen(true)}>
+                <div className="app-layout">
+                  <DesktopSidebarNav pathname={pathname} />
+                  <div id="main-content" className="main-content app-shell-content">
+                    <ErrorBoundary resetKey={pathname}>
+                      <Outlet />
+                    </ErrorBoundary>
+                  </div>
+                  <MobileNavDrawer
+                    open={mobileNavOpen}
+                    pathname={pathname}
+                    onClose={() => setMobileNavOpen(false)}
+                  />
+                </div>
+              </MobileNavProvider>
+            ) : (
               <div id="main-content" className="main-content">
                 <ErrorBoundary resetKey={pathname}>
                   <Outlet />
                 </ErrorBoundary>
               </div>
-            </div>
-            </CopilotProvider>
-          ) : (
-            <div id="main-content" className="main-content">
-              <ErrorBoundary resetKey={pathname}>
-                <Outlet />
-              </ErrorBoundary>
-            </div>
-          )}
+            )}
+          </CopilotProvider>
         </AppGate>
         <Toaster
           position="top-center"
@@ -239,5 +274,89 @@ function DesktopSidebarNav({ pathname }: { pathname: string }) {
         })}
       </nav>
     </aside>
+  );
+}
+
+function MobileNavDrawer({
+  open,
+  pathname,
+  onClose,
+}: {
+  open: boolean;
+  pathname: string;
+  onClose: () => void;
+}) {
+  return (
+    <AnimatePresence>
+      {open && (
+        <>
+          <motion.div
+            key="mobile-nav-scrim"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={onClose}
+            className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm lg:hidden"
+            aria-hidden="true"
+          />
+          <motion.aside
+            key="mobile-nav-drawer"
+            initial={{ x: "-100%" }}
+            animate={{ x: 0 }}
+            exit={{ x: "-100%" }}
+            transition={{ type: "spring", stiffness: 320, damping: 32 }}
+            role="dialog"
+            aria-label="Primary navigation"
+            className="fixed inset-y-0 left-0 z-[71] flex w-72 max-w-[85vw] flex-col gap-2 border-r border-white/10 bg-[oklch(0.18_0.03_180)] p-5 shadow-2xl lg:hidden"
+          >
+            <div className="mb-2 flex items-center justify-between">
+              <Link
+                to="/home"
+                onClick={onClose}
+                className="flex items-center gap-2 text-base font-bold"
+              >
+                <span className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-emerald-400 to-teal-300 text-emerald-950">
+                  <Leaf className="h-4 w-4" aria-hidden="true" />
+                </span>
+                <span className="tracking-tight">CarbonSense</span>
+              </Link>
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Close navigation"
+                className="grid h-9 w-9 place-items-center rounded-full border border-white/10 bg-white/5 text-foreground transition hover:bg-white/10"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <nav className="mt-2 flex flex-col gap-1.5">
+              {APP_NAV_ITEMS.map((item) => {
+                const Icon = item.icon;
+                const active = pathname === item.to || pathname.startsWith(`${item.to}/`);
+                return (
+                  <Link
+                    key={item.to}
+                    to={item.to}
+                    onClick={onClose}
+                    aria-current={active ? "page" : undefined}
+                    className={[
+                      "flex min-h-12 items-center gap-3 rounded-2xl px-3 text-sm font-semibold transition",
+                      active
+                        ? "bg-gradient-to-r from-emerald-400 to-teal-300 text-emerald-950 shadow-[0_16px_40px_-24px_rgba(45,212,191,0.9)]"
+                        : "text-emerald-50/70 hover:bg-white/[0.06] hover:text-emerald-50",
+                    ].join(" ")}
+                  >
+                    <Icon className="h-5 w-5" aria-hidden="true" />
+                    {item.label}
+                  </Link>
+                );
+              })}
+            </nav>
+          </motion.aside>
+        </>
+      )}
+    </AnimatePresence>
   );
 }

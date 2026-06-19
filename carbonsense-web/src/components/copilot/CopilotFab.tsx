@@ -17,7 +17,7 @@ export function CopilotFab({ open, onToggle, hasInsight }: Props) {
       animate={{ scale: 1, opacity: 1 }}
       transition={{ type: "spring", stiffness: 400, damping: 24, delay: 0.2 }}
       whileTap={{ scale: 0.92 }}
-      className="floating-ai-btn fixed z-[60] grid h-14 w-14 place-items-center rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 text-emerald-950 shadow-[0_18px_45px_-12px_rgba(16,185,129,0.7)] outline-none ring-0 transition-transform focus-visible:ring-2 focus-visible:ring-emerald-200 focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:h-16 sm:w-16"
+      className="copilot-fab fixed z-[60] grid h-14 w-14 place-items-center rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 text-emerald-950 shadow-[0_18px_45px_-12px_rgba(16,185,129,0.7)] outline-none ring-0 transition-transform focus-visible:ring-2 focus-visible:ring-emerald-200 focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:h-16 sm:w-16"
     >
       {/* pulsing glow */}
       {!open && (

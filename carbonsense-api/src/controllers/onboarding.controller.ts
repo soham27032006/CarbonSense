@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import { supabaseAdmin } from "../config/supabase";
 import { AppError } from "../middleware/errorHandler";
+import { todayIndia } from "../utils/date";
 import {
   calculateCarbonAge,
   calculateCarbonFromOnboarding,
@@ -210,7 +211,7 @@ export async function completeOnboarding(
     throw new AppError("No active challenges available", 404, "CHALLENGE_NOT_FOUND");
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayIndia();
   const { error: assignmentError } = await supabaseAdmin
     .from("user_challenges")
     .insert({

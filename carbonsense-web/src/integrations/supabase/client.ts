@@ -17,9 +17,10 @@ function createSupabaseClient() {
 
   return createClient<Database>(supabaseUrl, supabaseAnonKey, {
     auth: {
-      storage: typeof window !== 'undefined' ? localStorage : undefined,
+      storage: typeof window !== 'undefined' ? window.localStorage : undefined,
       persistSession: true,
       autoRefreshToken: true,
+      detectSessionInUrl: true,
     }
   });
 }

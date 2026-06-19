@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { ArrowLeft, Loader2, RefreshCw } from "lucide-react";
 import toast from "react-hot-toast";
 import { api } from "@/lib/api";
+import { StickyHeader } from "@/components/StickyHeader";
 
 type Category = "food" | "transport" | "home" | "shopping" | "travel" | "other";
 type Filter = "all" | Category;
@@ -177,7 +178,7 @@ function TransactionsPage() {
 
   return (
     <main
-      className="relative min-h-screen overflow-x-hidden bg-background text-foreground"
+      className="relative overflow-x-hidden bg-background text-foreground"
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
@@ -186,8 +187,8 @@ function TransactionsPage() {
         <div className="absolute -top-40 -left-20 h-[28rem] w-[28rem] rounded-full bg-emerald-500/10 blur-[120px]" />
       </div>
 
-      <header className="sticky top-0 z-30 border-b border-white/5 bg-background/70 backdrop-blur-xl">
-        <div className="mx-auto flex h-14 w-full max-w-2xl items-center justify-between px-5 sm:px-8">
+      <StickyHeader
+        left={
           <Link
             to="/dashboard"
             className="flex items-center gap-2 text-sm font-medium text-muted-foreground transition hover:text-foreground"
@@ -195,7 +196,9 @@ function TransactionsPage() {
             <ArrowLeft className="h-4 w-4" />
             Dashboard
           </Link>
-          <span className="text-sm font-bold tracking-tight">All Transactions</span>
+        }
+        center={<span className="text-sm font-bold tracking-tight">All Transactions</span>}
+        right={
           <button
             type="button"
             onClick={refresh}
@@ -204,8 +207,8 @@ function TransactionsPage() {
           >
             <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
           </button>
-        </div>
-      </header>
+        }
+      />
 
       {(pullDist > 0 || refreshing) && (
         <div
@@ -216,7 +219,7 @@ function TransactionsPage() {
         </div>
       )}
 
-      <div className="relative z-10 mx-auto w-full max-w-2xl px-5 pb-28 pt-4 sm:px-8">
+      <div className="relative z-10 mx-auto w-full max-w-2xl px-5 pb-28 sm:px-8">
         {/* filter chips */}
         <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
           {FILTERS.map((f) => {
@@ -292,7 +295,9 @@ function TransactionsPage() {
                   </p>
                 </div>
                 <div className="text-right">
-                  <p className="text-sm font-semibold tabular-nums">${t.amount.toFixed(2)}</p>
+                  <p className="text-sm font-semibold tabular-nums">
+                    {t.currency}{t.amount.toFixed(2)}
+                  </p>
                   <p className="mt-0.5 flex items-center justify-end gap-1 text-xs text-muted-foreground">
                     <span className="h-2 w-2 rounded-full" style={{ background: carbonDot(t.carbon_kg) }} />
                     <span className="tabular-nums">{t.carbon_kg.toFixed(1)} kg</span>
