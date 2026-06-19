@@ -15,6 +15,10 @@ export default defineConfig({
   vite: {
     server: {
       port: 5173,
+      // Allow Render's `<service>.onrender.com` subdomains in Vite's host check.
+      // Leading-dot wildcard matches any subdomain, so redeploys under a new
+      // Render hostname continue to work without config changes.
+      allowedHosts: [".onrender.com"],
       proxy: {
         "/api": {
           target: "http://localhost:3001",
@@ -22,6 +26,9 @@ export default defineConfig({
           secure: false,
         },
       },
+    },
+    preview: {
+      allowedHosts: [".onrender.com"],
     },
   },
 });
