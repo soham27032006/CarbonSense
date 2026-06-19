@@ -38,3 +38,7 @@ dist-ssr/
 *.njsproj
 *.sln
 *.sw?
+
+# Windows device-name artifacts accidentally created by shell redirects
+nul
+NUL
