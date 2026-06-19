@@ -72,25 +72,11 @@ function toCopilotError(error: unknown): AppError {
   if (error instanceof AppError) return error;
 
   const message = messageFrom(error);
-  if (isRateLimited(message)) {
-    return new AppError("You've reached today's Copilot limit. Try again tomorrow.", 429, "COPILOT_RATE_LIMITED");
-  }
-
-  if (isUnavailable(message)) {
-    return new AppError("The assistant is under heavy demand right now. Try again in a moment.", 503, "COPILOT_UPSTREAM_UNAVAILABLE");
-  }
-
-  if (isConfigError(message)) {
-    return new AppError("The assistant is unavailable right now.", 503, "COPILOT_UPSTREAM_CONFIG_ERROR");
-  }
-
-  if (message.includes("timed out") || message.includes("timeout")) {
-    return new AppError("The assistant took too long to respond.", 504, "COPILOT_TIMEOUT");
-  }
-
-  if (isContextError(message)) {
-    return new AppError("I couldn't load your Copilot context right now.", 503, "COPILOT_CONTEXT_UNAVAILABLE");
-  }
+  if (isRateLimited(message)) return new AppError("You've reached today's Copilot limit. Try again tomorrow.", 429, "COPILOT_RATE_LIMITED");
+  if (isUnavailable(message)) return new AppError("The assistant is under heavy demand right now. Try again in a moment.", 503, "COPILOT_UPSTREAM_UNAVAILABLE");
+  if (isConfigError(message)) return new AppError("The assistant is unavailable right now.", 503, "COPILOT_UPSTREAM_CONFIG_ERROR");
+  if (message.includes("timed out") || message.includes("timeout")) return new AppError("The assistant took too long to respond.", 504, "COPILOT_TIMEOUT");
+  if (isContextError(message)) return new AppError("I couldn't load your Copilot context right now.", 503, "COPILOT_CONTEXT_UNAVAILABLE");
 
   return new AppError("The assistant couldn't answer that right now.", 502, "COPILOT_UPSTREAM_ERROR");
 }

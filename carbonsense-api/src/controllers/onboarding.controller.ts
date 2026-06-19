@@ -107,6 +107,22 @@ const completeOnboardingSchema = z.object({
     .optional()
 });
 
+type OnboardingQuizData = z.infer<typeof onboardingQuizSchema>;
+type SelectedTrack = z.infer<typeof completeOnboardingSchema>["selected_track"];
+
+type OnboardingSummary = {
+  estimatedAnnualTons: number;
+  carbonAge: number;
+  percentile: number;
+  categoryBreakdown: ReturnType<typeof getCategoryBreakdown>;
+  onboardingData: OnboardingQuizData & {
+    estimated_annual_tons: number;
+    percentile: number;
+    category_breakdown: ReturnType<typeof getCategoryBreakdown>;
+    highest_carbon_category: string;
+  };
+};
+
 function requireUserId(req: Request): string {
   if (!req.user) {
     throw new AppError("Authentication required", 401, "AUTH_REQUIRED");
@@ -115,52 +131,109 @@ function requireUserId(req: Request): string {
   return req.user.id;
 }
 
+function buildOnboardingSummary(quizData: OnboardingQuizData): OnboardingSummary {
+  const categoryBreakdown = getCategoryBreakdown(quizData);
+  const estimatedAnnualTons = calculateCarbonFromOnboarding(quizData);
+  const carbonAge = calculateCarbonAge(quizData.biological_age, estimatedAnnualTons, quizData.country);
+  const percentile = getPercentile(estimatedAnnualTons, quizData.country);
+  const highestCategory = getHighestCarbonCategory(categoryBreakdown);
+
+  return {
+    estimatedAnnualTons,
+    carbonAge,
+    percentile,
+    categoryBreakdown,
+    onboardingData: {
+      ...quizData,
+      estimated_annual_tons: estimatedAnnualTons,
+      percentile,
+      category_breakdown: categoryBreakdown,
+      highest_carbon_category: highestCategory
+    }
+  };
+}
+
+async function saveOnboardingSummary(userId: string, summary: OnboardingSummary): Promise<void> {
+  const { error } = await supabaseAdmin
+    .from("users")
+    .update({ onboarding_data: summary.onboardingData, carbon_age: summary.carbonAge })
+    .eq("id", userId);
+
+  if (error) throw new AppError(error.message, 500, "ONBOARDING_SAVE_FAILED");
+}
+
+async function getHighestSavedCategory(userId: string): Promise<string | undefined> {
+  const { data, error } = await supabaseAdmin
+    .from("users")
+    .select("onboarding_data")
+    .eq("id", userId)
+    .single<{ onboarding_data: { highest_carbon_category?: string } }>();
+
+  if (error) throw new AppError(error.message, 404, "PROFILE_NOT_FOUND");
+  return data.onboarding_data.highest_carbon_category;
+}
+
+function resolveChallengeCategory(selectedTrack: SelectedTrack, highestCategory: string | undefined) {
+  const fallbackCategory = ["food", "transport", "home", "shopping", "travel"].includes(highestCategory ?? "")
+    ? highestCategory
+    : "shopping";
+  const inferredCategory = toChallengeCategory(fallbackCategory as "food" | "transport" | "home" | "shopping" | "travel");
+
+  if (selectedTrack === "food_first") return "food";
+  if (selectedTrack === "commute_conscious") return "transport";
+  return inferredCategory;
+}
+
+async function getChallengeForCategory(category: Challenge["category"]): Promise<Challenge | null> {
+  const { data, error } = await supabaseAdmin
+    .from("challenges")
+    .select("*")
+    .eq("is_active", true)
+    .eq("category", category)
+    .order("difficulty", { ascending: true })
+    .limit(1)
+    .maybeSingle<Challenge>();
+
+  if (error) throw new AppError(error.message, 500, "CHALLENGE_LOOKUP_FAILED");
+  return data;
+}
+
+async function assignFirstChallenge(userId: string, challengeId: string): Promise<void> {
+  const { error } = await supabaseAdmin.from("user_challenges").insert({
+    user_id: userId,
+    challenge_id: challengeId,
+    date_assigned: todayIndia(),
+    status: "pending"
+  });
+
+  if (error) throw new AppError(error.message, 500, "FIRST_CHALLENGE_ASSIGN_FAILED");
+}
+
+async function markOnboardingComplete(userId: string): Promise<void> {
+  const { error } = await supabaseAdmin
+    .from("users")
+    .update({ onboarding_complete: true })
+    .eq("id", userId);
+
+  if (error) throw new AppError(error.message, 500, "ONBOARDING_COMPLETE_FAILED");
+}
+
 /**
  * Handles the submitOnboardingQuiz API request and returns the existing response contract.
  * @returns Sends a JSON response through Express.
  * @throws Forwards validation, authentication, and service failures to Express error middleware.
  */
-export async function submitOnboardingQuiz(
-  req: Request,
-  res: Response
-): Promise<void> {
+export async function submitOnboardingQuiz(req: Request, res: Response): Promise<void> {
   const userId = requireUserId(req);
-  const quizData = onboardingQuizSchema.parse(req.body);
-  const categoryBreakdown = getCategoryBreakdown(quizData);
-  const estimatedAnnualTons = calculateCarbonFromOnboarding(quizData);
-  const carbonAge = calculateCarbonAge(
-    quizData.biological_age,
-    estimatedAnnualTons,
-    quizData.country
-  );
-  const percentile = getPercentile(estimatedAnnualTons, quizData.country);
-  const highestCategory = getHighestCarbonCategory(categoryBreakdown);
-  const onboardingData = {
-    ...quizData,
-    estimated_annual_tons: estimatedAnnualTons,
-    percentile,
-    category_breakdown: categoryBreakdown,
-    highest_carbon_category: highestCategory
-  };
-
-  const { error } = await supabaseAdmin
-    .from("users")
-    .update({
-      onboarding_data: onboardingData,
-      carbon_age: carbonAge
-    })
-    .eq("id", userId);
-
-  if (error) {
-    throw new AppError(error.message, 500, "ONBOARDING_SAVE_FAILED");
-  }
+  const summary = buildOnboardingSummary(onboardingQuizSchema.parse(req.body));
+  await saveOnboardingSummary(userId, summary);
 
   res.status(200).json({
     success: true,
-    estimated_annual_tons: estimatedAnnualTons,
-    carbon_age: carbonAge,
-    percentile,
-    category_breakdown: categoryBreakdown
+    estimated_annual_tons: summary.estimatedAnnualTons,
+    carbon_age: summary.carbonAge,
+    percentile: summary.percentile,
+    category_breakdown: summary.categoryBreakdown
   });
 }
 
@@ -169,92 +242,18 @@ export async function submitOnboardingQuiz(
  * @returns Sends a JSON response through Express.
  * @throws Forwards validation, authentication, and service failures to Express error middleware.
  */
-export async function completeOnboarding(
-  req: Request,
-  res: Response
-): Promise<void> {
+export async function completeOnboarding(req: Request, res: Response): Promise<void> {
   const userId = requireUserId(req);
   const { selected_track: selectedTrack } = completeOnboardingSchema.parse(req.body ?? {});
   await ensureChallengesSeeded();
-  const { data: userProfile, error: profileError } = await supabaseAdmin
-    .from("users")
-    .select("onboarding_data")
-    .eq("id", userId)
-    .single<{ onboarding_data: { highest_carbon_category?: string } }>();
 
-  if (profileError) {
-    throw new AppError(profileError.message, 404, "PROFILE_NOT_FOUND");
-  }
+  const category = resolveChallengeCategory(selectedTrack, await getHighestSavedCategory(userId));
+  const firstChallenge = (await getChallengeForCategory(category)) ?? (await getFallbackChallenge());
+  if (!firstChallenge) throw new AppError("No active challenges available", 404, "CHALLENGE_NOT_FOUND");
 
-  const highestCategory = userProfile.onboarding_data.highest_carbon_category;
-  const inferredCategory = toChallengeCategory(
-    highestCategory === "food" ||
-      highestCategory === "transport" ||
-      highestCategory === "home" ||
-      highestCategory === "shopping" ||
-      highestCategory === "travel"
-      ? highestCategory
-      : "shopping"
-  );
-  const challengeCategory =
-    selectedTrack === "food_first"
-      ? "food"
-      : selectedTrack === "commute_conscious"
-      ? "transport"
-      : inferredCategory;
-
-  const { data: categoryChallenge, error: challengeError } = await supabaseAdmin
-    .from("challenges")
-    .select("*")
-    .eq("is_active", true)
-    .eq("category", challengeCategory)
-    .order("difficulty", { ascending: true })
-    .limit(1)
-    .maybeSingle<Challenge>();
-
-  if (challengeError) {
-    throw new AppError(challengeError.message, 500, "CHALLENGE_LOOKUP_FAILED");
-  }
-
-  const firstChallenge = categoryChallenge
-    ? categoryChallenge
-    : await getFallbackChallenge();
-
-  if (!firstChallenge) {
-    throw new AppError("No active challenges available", 404, "CHALLENGE_NOT_FOUND");
-  }
-
-  const today = todayIndia();
-  const { error: assignmentError } = await supabaseAdmin
-    .from("user_challenges")
-    .insert({
-      user_id: userId,
-      challenge_id: firstChallenge.id,
-      date_assigned: today,
-      status: "pending"
-    });
-
-  if (assignmentError) {
-    throw new AppError(
-      assignmentError.message,
-      500,
-      "FIRST_CHALLENGE_ASSIGN_FAILED"
-    );
-  }
-
-  const { error: updateError } = await supabaseAdmin
-    .from("users")
-    .update({ onboarding_complete: true })
-    .eq("id", userId);
-
-  if (updateError) {
-    throw new AppError(updateError.message, 500, "ONBOARDING_COMPLETE_FAILED");
-  }
-
-  res.status(200).json({
-    success: true,
-    first_challenge: firstChallenge
-  });
+  await assignFirstChallenge(userId, firstChallenge.id);
+  await markOnboardingComplete(userId);
+  res.status(200).json({ success: true, first_challenge: firstChallenge });
 }
 
 async function getFallbackChallenge(): Promise<Challenge | null> {

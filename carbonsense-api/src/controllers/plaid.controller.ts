@@ -44,6 +44,10 @@ function toBankError(error: unknown): AppError {
   );
 }
 
+function forwardBankError(error: unknown, next: NextFunction): void {
+  next(error instanceof z.ZodError ? error : toBankError(error));
+}
+
 /**
  * Handles the createPlaidLinkToken API request and returns the existing response contract.
  * @returns Sends a JSON response through Express.
@@ -89,20 +93,9 @@ export async function exchangePlaidToken(
       input.institution.name
     );
 
-    res.status(201).json({
-      success: true,
-      data: {
-        connection
-      }
-    });
+    res.status(201).json({ success: true, data: { connection } });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      next(error);
-      return;
-    }
-
-    next(toBankError(error));
-    return;
+    forwardBankError(error, next);
   }
 }
 
@@ -126,13 +119,7 @@ export async function syncPlaidTransactions(
       data: result
     });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      next(error);
-      return;
-    }
-
-    next(toBankError(error));
-    return;
+    forwardBankError(error, next);
   }
 }
 
@@ -153,20 +140,9 @@ export async function disconnectPlaidBank(
       .parse(req.params);
     const connection = await disconnectBank(userId, connectionId);
 
-    res.status(200).json({
-      success: true,
-      data: {
-        connection
-      }
-    });
+    res.status(200).json({ success: true, data: { connection } });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      next(error);
-      return;
-    }
-
-    next(toBankError(error));
-    return;
+    forwardBankError(error, next);
   }
 }
 
