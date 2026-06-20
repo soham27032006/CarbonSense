@@ -1,3 +1,9 @@
+/**
+ * Request-validation middleware. Runs Zod schemas against req.body, req.query,
+ * and/or req.params before the request reaches controller logic. Does NOT
+ * rewrite parsed values back onto the request; every controller re-parses
+ * its own copy. Validation failures are forwarded to the shared error handler.
+ */
 import type { NextFunction, Request, Response } from "express";
 import type { ZodTypeAny } from "zod";
 

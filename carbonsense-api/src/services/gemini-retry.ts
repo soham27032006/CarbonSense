@@ -31,6 +31,11 @@ type GeminiRetryOptions = {
   sleep?: (delayMs: number) => Promise<void>;
 };
 
+/**
+ * Operational error thrown when the Gemini API is rate-limited (429) or returns
+ * a resource-exhausted signal. Callers catch this to return a user-friendly
+ * "busy" message instead of propagating a raw upstream error.
+ */
 export class GeminiRateLimitError extends Error {
   code = GEMINI_BUSY_ERROR_CODE;
   cause: unknown;
@@ -42,6 +47,13 @@ export class GeminiRateLimitError extends Error {
   }
 }
 
+/**
+ * Type guard that identifies whether an error represents a Gemini rate-limit
+ * condition. Matches both the typed {@link GeminiRateLimitError} class and
+ * plain objects carrying the `GEMINI_BUSY_ERROR_CODE`, as well as raw
+ * upstream errors whose status or message indicates rate-limiting.
+ * @returns `true` when the error should be treated as a rate-limit failure.
+ */
 export function isGeminiRateLimitError(error: unknown): error is GeminiRateLimitError {
   return (
     error instanceof GeminiRateLimitError ||
@@ -53,6 +65,17 @@ export function isGeminiRateLimitError(error: unknown): error is GeminiRateLimit
   );
 }
 
+/**
+ * Executes an async `work` function with automatic retry on transient Gemini
+ * failures (429, 503, and common rate-limit / resource-exhausted messages).
+ * Uses exponential back-off capped by the remaining {@link AI_REQUEST_TIMEOUT_MS}
+ * budget so retries never exceed the overall timeout.
+ * @returns The value returned by `work` on its first successful attempt.
+ * @throws {GeminiRateLimitError} When the upstream returns a rate-limit signal
+ *         and no retries remain.
+ * @throws The last error from `work` when retries are exhausted for non-rate-limit
+ *         failures, or when the error is not transient.
+ */
 export async function withGeminiRetry<T>(
   work: () => Promise<T>,
   options: GeminiRetryOptions = {}

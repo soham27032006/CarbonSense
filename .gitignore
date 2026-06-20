@@ -42,3 +42,6 @@ dist-ssr/
 # Windows device-name artifacts accidentally created by shell redirects
 nul
 NUL
+
+# Per-user local config (agent/IDE settings)
+.claude/settings.local.json

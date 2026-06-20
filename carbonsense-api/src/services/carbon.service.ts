@@ -92,6 +92,7 @@ const DEFAULT_BIOLOGICAL_AGE = 25;
 const MERCHANT_MATCH_CONFIDENCE = 0.85;
 const CATEGORY_MATCH_CONFIDENCE = 0.65;
 const AI_MATCH_CONFIDENCE = 0.5;
+const DASHBOARD_INSIGHT_TIMEOUT_MS = 1200;
 
 const aiClassificationSchema = z.object({
   carbon_category: z.enum([
@@ -1312,7 +1313,7 @@ async function generateDailyInsightForDashboard(userId: string): Promise<string>
     new Promise<string>((resolve) => {
       setTimeout(() => {
         resolve("Your dashboard is ready. Connect transactions or complete today's challenge to unlock sharper insights.");
-      }, 1200);
+      }, DASHBOARD_INSIGHT_TIMEOUT_MS);
     })
   ]);
 }

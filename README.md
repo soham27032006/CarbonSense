@@ -17,7 +17,7 @@ The repo satisfies every rubric category for the Hack2Skill Prompt Wars / "Duoli
 | **Code Quality** | Full JSDoc pass (file + per-function) across all controllers and services; 37 service functions decomposed into orchestrator + `*Workflow` helpers; every function now < 30 lines; controllers < 25 lines | `CODE_QUALITY_AUDIT.md` Phase 2b (line-count table); e.g. `getDashboard` 114 → 3 orchestrator lines, `getTransactions` 73 → 6 in `carbonsense-api/src/services/carbon.service.ts` |
 | **Security** | Helmet CSP (strict, `frameAncestors:'none'`, `objectSrc:'none'`); CORS allowlist fail-closed in production; Zod-validated every route via shared `validateRequest`; Redis-backed rate limiting (100/15 min default, 20/15 min for AI); AES-256-GCM Plaid token encryption; error handler never echoes stack traces | `carbonsense-api/src/app.ts:58-76` (CSP), `:30-40` (CORS allowlist), `:135` (rate limit mounted); `middleware/rateLimit.ts`; `middleware/validateRequest.ts`; `SECURITY_ACCESSIBILITY_AUDIT.md` — all 7 items PASS |
 | **Efficiency** | Redis caching for team leaderboards (1h TTL, invalidated on join/leave/carbon update) so the scoreboard doesn't re-aggregate per request; Upstash ioredis pipeline batching; server-side pagination on `/api/carbon/transactions` (LIMIT 15, has_more cursor); memoized effect-free derived state in heavy components | `carbonsense-api/src/services/team.service.ts:193-263` (Redis leaderboard); `routes/transactions.tsx:57` (`LIMIT = 15`) |
-| **Testing** | Vitest suite: 6 test files, 21 passing tests, 3.18s runtime; shared Supabase/env/Redis/AI mocks; covers carbon service math, Plaid token round-trip, profile updates, challenge acceptance, XP/level math, team join flow | `carbonsense-api/vitest.config.ts`; `carbonsense-api/tests/services/*.test.ts` (6 files); runs green via `npm test` in `carbonsense-api/` |
+| **Testing** | Vitest suite: 10 test files, 36 passing tests, ~4.6s runtime; shared Supabase/env/Redis/AI mocks; covers carbon service math, Plaid token round-trip, profile updates, challenge acceptance, XP/level math, team join flow, Gemini retry, rate-limit validation | `carbonsense-api/vitest.config.ts`; `carbonsense-api/tests/` (10 files across services/ and controllers/ and middleware/); runs green via `npm test` in `carbonsense-api/` |
 | **Accessibility** | Skip-to-main-content link; semantic landmarks (`<main>`, `<header>`, `<nav>`, `<aside>`); focus trap shared hook for modals and mobile drawer; `aria-live="polite"` on AI responses and skeleton loaders; stable form IDs via `useId`; `aria-invalid` + `aria-describedby` on form errors; `role="status"` on non-progress spinners; global `:focus-visible` ring fallback | `routes/__root.tsx:150-155` (skip link); `hooks/useFocusTrap.ts`; `components/copilot/CopilotPanel.tsx:280` (`aria-live`); `components/AuthFormFields.tsx` (form a11y); `styles.css:205-209` (focus ring); full before/after in `SECURITY_ACCESSIBILITY_AUDIT.md` |
 
 ---
@@ -161,7 +161,7 @@ cd carbonsense-api
 npm test
 ```
 
-Expect: **6 files, 21 tests, all passing in ~3s.**
+Expect: **10 files, 36 tests, all passing in ~4.6s.**
 
 ---
 

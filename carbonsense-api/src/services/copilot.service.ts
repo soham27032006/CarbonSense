@@ -569,30 +569,66 @@ async function saveConversationMessages(
   }
 }
 
+/**
+ * Assembles the Gemini system prompt for the Copilot chat turn.
+ * Orchestrates context gathering and delegates to the template function.
+ * @returns The complete system prompt string sent to the Gemini API.
+ */
 function buildSystemPrompt(context: UserContext): string {
   const equivalencies = getEquivalencies(context.monthly_kg);
   const carbonSection = context.has_live_carbon_data
     ? buildLiveCarbonSection(context, equivalencies)
     : buildNoCarbonDataSection();
 
+  return formatSystemPrompt(
+    context.name,
+    context.carbon_age,
+    context.level_name,
+    context.level,
+    context.xp,
+    context.streak_count,
+    buildTodaysChallengeSection(context.todays_challenge),
+    carbonSection,
+    context.recent_challenges
+  );
+}
+
+/**
+ * Renders the full Copilot system prompt template from its component parts.
+ * Extracted from buildSystemPrompt so the orchestrator stays under 30 lines.
+ * Every interpolated value is passed as an argument to keep the template
+ * deterministic and testable.
+ * @returns The complete system prompt string.
+ */
+function formatSystemPrompt(
+  name: string,
+  carbonAge: number,
+  levelName: string,
+  level: number,
+  xp: number,
+  streakCount: number,
+  todaysChallengeSection: string,
+  carbonSection: string,
+  recentChallenges: string[]
+): string {
   return `
 You are CarbonSense AI, a friendly and knowledgeable personal climate coach.
 
 USER CONTEXT:
-- Name: ${context.name}
-- Carbon Age: ${context.carbon_age}
-- Level: ${context.level_name} (Level ${context.level})
-- XP: ${context.xp}
-- Current Streak: ${context.streak_count} days
+- Name: ${name}
+- Carbon Age: ${carbonAge}
+- Level: ${levelName} (Level ${level})
+- XP: ${xp}
+- Current Streak: ${streakCount} days
 
 TODAY'S CHALLENGE:
-${buildTodaysChallengeSection(context.todays_challenge)}
+${todaysChallengeSection}
 
 CARBON DATA:
 ${carbonSection}
 
 RECENT CHALLENGE HISTORY:
-- ${context.recent_challenges.join(", ") || "No recent challenges yet"}
+- ${recentChallenges.join(", ") || "No recent challenges yet"}
 
 RULES:
 1. Be encouraging, specific, and action-oriented
