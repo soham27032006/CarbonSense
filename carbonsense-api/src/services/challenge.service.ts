@@ -71,7 +71,7 @@ export async function getTodayChallenge(
   const today = todayIndia();
   const existingAssignment = await getExistingTodayAssignment(userId, today);
 
-  if (existingAssignment && existingAssignment.status !== "skipped" && altOffset === 0) {
+  if (existingAssignment && existingAssignment.status !== "skipped") {
     return hydrateChallenge(existingAssignment, userId);
   }
 
