@@ -3,9 +3,13 @@
  */
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { env } from "../config/env";
+import { AI_REQUEST_TIMEOUT_MS } from "../config/timeouts";
 
 const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+const model = genAI.getGenerativeModel(
+  { model: "gemini-2.5-flash" },
+  { timeout: AI_REQUEST_TIMEOUT_MS }
+);
 const TRANSIENT_AI_ERROR_PATTERNS = [
   "503 service unavailable",
   "429",
@@ -95,6 +99,80 @@ Return ONLY valid JSON: {"carbon_category":"food|transport|home|shopping|travel|
 
   const result = await withAiRetry(() => model.generateContent(prompt));
   return JSON.parse(extractJson(result.response.text()));
+}
+
+/**
+ * Runs the classifyCarbonBatch service workflow for CarbonSense domain data.
+ * @param items - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
+export async function classifyCarbonBatch(
+  items: Array<{ merchant: string; category: string; amount: number }>
+): Promise<Array<{
+  carbon_category: "food" | "transport" | "home" | "shopping" | "travel" | "other";
+  emission_factor_per_dollar: number;
+  reasoning: string;
+}>> {
+  if (items.length === 0) {
+    return [];
+  }
+
+  const prompt = `You are a carbon emissions classifier. Classify each transaction into a carbon category and emission factor (kg CO2 per USD).
+Return ONLY a JSON array (one element per transaction, in the same order):
+[{"carbon_category":"food|transport|home|shopping|travel|other","emission_factor_per_dollar":number,"reasoning":"string"}]
+
+Transactions:
+${items
+    .map(
+      (item, index) =>
+        `${index + 1}. Merchant: ${item.merchant}, Category: ${item.category}, Amount: $${item.amount}`
+    )
+    .join("\n")}`;
+
+  const result = await withAiRetry(() => model.generateContent(prompt));
+  const parsed = JSON.parse(extractJson(result.response.text())) as unknown;
+
+  return Array.isArray(parsed) ? (parsed as Array<{
+    carbon_category: "food" | "transport" | "home" | "shopping" | "travel" | "other";
+    emission_factor_per_dollar: number;
+    reasoning: string;
+  }>) : [];
+}
+
+/**
+ * Runs the structuredCopilotReply service workflow for CarbonSense domain data.
+ * @param systemPrompt - Input consumed by this workflow.
+ * @param userMessage - Input consumed by this workflow.
+ * @param history - Input consumed by this workflow.
+ * @returns Returns the service result consumed by controllers.
+ * @throws Throws service, persistence, or upstream API errors for the caller to handle.
+ */
+export async function structuredCopilotReply(
+  systemPrompt: string,
+  userMessage: string,
+  history: ChatHistoryMessage[] = []
+): Promise<unknown> {
+  return withAiRetry(async () => {
+    const chat = model.startChat({
+      history: history.map((msg) => ({
+        role: msg.role === "assistant" ? "model" : "user",
+        parts: [{ text: msg.content }]
+      })),
+      generationConfig: { maxOutputTokens: 700, temperature: 0.7 }
+    });
+
+    const fullPrompt =
+      `${systemPrompt}
+
+When you reply, also return three concise follow-up prompts the user might tap next.
+Return ONLY valid JSON: {"response": string, "suggestions": [string, string, string]}
+
+User: ${userMessage}`;
+
+    const result = await chat.sendMessage(fullPrompt);
+    return JSON.parse(extractJson(result.response.text()));
+  });
 }
 
 /**

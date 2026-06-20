@@ -75,40 +75,64 @@ export async function addXP(
   userId: string,
   amount: number
 ): Promise<AddXpResult> {
-  const { data: user, error: userError } = await supabaseAdmin
-    .from("users")
-    .select("xp,level")
-    .eq("id", userId)
-    .single<{ xp: number; level: number }>();
+  return await addXPWorkflow(userId, amount);
+}
 
-  if (userError || !user) {
-    throw new Error("Unable to load user XP");
-  }
+/**
+ * Executes the extracted addXP service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `addXP`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+type UserXpState = { xp: number; level: number };
 
+type XpUpdate = {
+  newXp: number;
+  nextLevel: LevelResult;
+  levelUp: boolean;
+};
+
+async function addXPWorkflow(userId: string, amount: number): Promise<AddXpResult> {
+  const update = calculateXpUpdate(await loadUserXpState(userId), amount);
+  await saveUserXpState(userId, update);
+  return buildAddXpResult(update);
+}
+
+/**
+ * Loads the current XP and level for an XP update.
+ * @returns Current XP state for the user.
+ * @throws When the user XP row cannot be loaded.
+ */
+async function loadUserXpState(userId: string): Promise<UserXpState> {
+  const { data: user, error } = await supabaseAdmin.from("users").select("xp,level").eq("id", userId).single<UserXpState>();
+  if (error || !user) throw new Error("Unable to load user XP");
+  return user;
+}
+
+/**
+ * Calculates the next XP, level, and level-up flag.
+ * @returns Computed XP update values.
+ */
+function calculateXpUpdate(user: UserXpState, amount: number): XpUpdate {
   const newXp = user.xp + amount;
   const nextLevel = getLevelForXp(newXp);
-  const levelUp = nextLevel.level > user.level;
+  return { newXp, nextLevel, levelUp: nextLevel.level > user.level };
+}
 
-  const { error: updateError } = await supabaseAdmin
-    .from("users")
-    .update({
-      xp: newXp,
-      level: nextLevel.level,
-      level_name: nextLevel.level_name
-    })
-    .eq("id", userId);
+/**
+ * Persists the calculated XP update to the user row.
+ * @throws When the XP update cannot be saved.
+ */
+async function saveUserXpState(userId: string, update: XpUpdate): Promise<void> {
+  const { error } = await supabaseAdmin.from("users").update({ xp: update.newXp, level: update.nextLevel.level, level_name: update.nextLevel.level_name }).eq("id", userId);
+  if (error) throw new Error("Unable to update user XP");
+}
 
-  if (updateError) {
-    throw new Error("Unable to update user XP");
-  }
-
-  return {
-    new_xp: newXp,
-    new_level: nextLevel.level,
-    level_name: nextLevel.level_name,
-    xp_to_next_level: getXpToNextLevel(newXp),
-    level_up: levelUp
-  };
+/**
+ * Shapes the XP update result for callers.
+ * @returns Public XP update result.
+ */
+function buildAddXpResult(update: XpUpdate): AddXpResult {
+  return { new_xp: update.newXp, new_level: update.nextLevel.level, level_name: update.nextLevel.level_name, xp_to_next_level: getXpToNextLevel(update.newXp), level_up: update.levelUp };
 }
 
 /**
@@ -118,66 +142,82 @@ export async function addXP(
  * @throws Throws service, persistence, or upstream API errors for the caller to handle.
  */
 export async function checkAchievements(userId: string): Promise<Achievement[]> {
-  const [userState, completedCount, carbonSavedKg, achievements, earnedIds] =
-    await Promise.all([
-      getUserAchievementState(userId),
-      getCompletedChallengeCount(userId),
-      getCompletedCarbonSaved(userId),
-      getAllEarnableAchievements(),
-      getEarnedAchievementIds(userId)
-    ]);
+  return await checkAchievementsWorkflow(userId);
+}
 
-  const newlyEarned = achievements.filter((achievement) => {
-    if (earnedIds.has(achievement.id)) {
-      return false;
-    }
+/**
+ * Executes the extracted checkAchievements service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `checkAchievements`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+type AchievementInputs = {
+  userState: { streak_count: number; level: number };
+  completedCount: number;
+  carbonSavedKg: number;
+  achievements: Achievement[];
+  earnedIds: Set<string>;
+};
 
-    if (achievement.condition_type === "streak") {
-      return userState.streak_count >= achievement.threshold;
-    }
+async function checkAchievementsWorkflow(userId: string): Promise<Achievement[]> {
+  const newlyEarned = getNewlyEarnedAchievements(await loadAchievementInputs(userId));
+  if (newlyEarned.length === 0) return [];
 
-    if (achievement.condition_type === "challenges_completed") {
-      return completedCount >= achievement.threshold;
-    }
-
-    if (achievement.condition_type === "carbon_saved") {
-      return carbonSavedKg >= achievement.threshold;
-    }
-
-    if (achievement.condition_type === "level") {
-      return userState.level >= achievement.threshold;
-    }
-
-    return false;
-  });
-
-  if (newlyEarned.length === 0) {
-    return [];
-  }
-
-  const { error: insertError } = await supabaseAdmin
-    .from("user_achievements")
-    .insert(
-      newlyEarned.map((achievement) => ({
-        user_id: userId,
-        achievement_id: achievement.id
-      }))
-    );
-
-  if (insertError) {
-    throw new Error("Unable to save earned achievements");
-  }
-
-  const bonusXp = newlyEarned.reduce(
-    (total, achievement) => total + achievement.xp_reward,
-    0
-  );
-
-  if (bonusXp > 0) {
-    await addXP(userId, bonusXp);
-  }
-
+  await saveEarnedAchievements(userId, newlyEarned);
+  await awardAchievementBonusXp(userId, newlyEarned);
   return newlyEarned;
+}
+
+/**
+ * Loads the user state and achievement catalogs needed for eligibility checks.
+ * @returns Achievement evaluation inputs.
+ */
+async function loadAchievementInputs(userId: string): Promise<AchievementInputs> {
+  const [userState, completedCount, carbonSavedKg, achievements, earnedIds] = await Promise.all([
+    getUserAchievementState(userId),
+    getCompletedChallengeCount(userId),
+    getCompletedCarbonSaved(userId),
+    getAllEarnableAchievements(),
+    getEarnedAchievementIds(userId)
+  ]);
+  return { userState, completedCount, carbonSavedKg, achievements, earnedIds };
+}
+
+/**
+ * Filters achievements that satisfy their condition and are not already earned.
+ * @returns Newly earned achievements only.
+ */
+function getNewlyEarnedAchievements(input: AchievementInputs): Achievement[] {
+  return input.achievements.filter((achievement) => isAchievementNewlyEarned(achievement, input));
+}
+
+/**
+ * Checks one achievement against the current user progress.
+ * @returns Whether the achievement should be awarded.
+ */
+function isAchievementNewlyEarned(achievement: Achievement, input: AchievementInputs): boolean {
+  if (input.earnedIds.has(achievement.id)) return false;
+  if (achievement.condition_type === "streak") return input.userState.streak_count >= achievement.threshold;
+  if (achievement.condition_type === "challenges_completed") return input.completedCount >= achievement.threshold;
+  if (achievement.condition_type === "carbon_saved") return input.carbonSavedKg >= achievement.threshold;
+  if (achievement.condition_type === "level") return input.userState.level >= achievement.threshold;
+  return false;
+}
+
+/**
+ * Saves newly earned achievements for a user.
+ * @throws When earned achievements cannot be persisted.
+ */
+async function saveEarnedAchievements(userId: string, achievements: Achievement[]): Promise<void> {
+  const { error } = await supabaseAdmin.from("user_achievements").insert(achievements.map((achievement) => ({ user_id: userId, achievement_id: achievement.id })));
+  if (error) throw new Error("Unable to save earned achievements");
+}
+
+/**
+ * Applies bonus XP for newly earned achievements.
+ */
+async function awardAchievementBonusXp(userId: string, achievements: Achievement[]): Promise<void> {
+  const bonusXp = achievements.reduce((total, achievement) => total + achievement.xp_reward, 0);
+  if (bonusXp > 0) await addXP(userId, bonusXp);
 }
 
 /**
@@ -187,53 +227,56 @@ export async function checkAchievements(userId: string): Promise<Achievement[]> 
  * @throws Throws service, persistence, or upstream API errors for the caller to handle.
  */
 export async function getProgress(userId: string) {
-  const [
-    { data: user, error: userError },
-    completedCount,
-    carbonSavedKg,
-    { count: totalAchievements },
-    { count: achievementsEarned }
-  ] = await Promise.all([
-    supabaseAdmin
-      .from("users")
-      .select("level,level_name,xp,streak_count,streak_max,streak_freeze_available")
-      .eq("id", userId)
-      .single<{
-        level: number;
-        level_name: string;
-        xp: number;
-        streak_count: number;
-        streak_max: number;
-        streak_freeze_available: boolean;
-      }>(),
+  return await getProgressWorkflow(userId);
+}
+
+/**
+ * Executes the extracted getProgress service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `getProgress`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+type ProgressInputs = {
+  user: {
+    level: number;
+    level_name: string;
+    xp: number;
+    streak_count: number;
+    streak_max: number;
+    streak_freeze_available: boolean;
+  };
+  completedCount: number;
+  carbonSavedKg: number;
+  totalAchievements: number;
+  achievementsEarned: number;
+};
+
+async function getProgressWorkflow(userId: string) {
+  return buildProgressResponse(await loadProgressInputs(userId));
+}
+
+/**
+ * Loads all counters needed for gamification progress.
+ * @returns Progress response inputs.
+ * @throws When the user progress row cannot be loaded.
+ */
+async function loadProgressInputs(userId: string): Promise<ProgressInputs> {
+  const [{ data: user, error: userError }, completedCount, carbonSavedKg, { count: totalAchievements }, { count: achievementsEarned }] = await Promise.all([
+    supabaseAdmin.from("users").select("level,level_name,xp,streak_count,streak_max,streak_freeze_available").eq("id", userId).single<ProgressInputs["user"]>(),
     getCompletedChallengeCount(userId),
     getCompletedCarbonSaved(userId),
-    supabaseAdmin
-      .from("achievements")
-      .select("id", { count: "exact", head: true }),
-    supabaseAdmin
-      .from("user_achievements")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", userId)
+    supabaseAdmin.from("achievements").select("id", { count: "exact", head: true }),
+    supabaseAdmin.from("user_achievements").select("id", { count: "exact", head: true }).eq("user_id", userId)
   ]);
+  if (userError || !user) throw new Error("Unable to load gamification progress");
+  return { user, completedCount, carbonSavedKg, totalAchievements: totalAchievements ?? 0, achievementsEarned: achievementsEarned ?? 0 };
+}
 
-  if (userError || !user) {
-    throw new Error("Unable to load gamification progress");
-  }
-
-  return {
-    level: user.level,
-    level_name: user.level_name,
-    xp: user.xp,
-    xp_to_next: getXpToNextLevel(user.xp),
-    streak: user.streak_count,
-    streak_max: user.streak_max,
-    freeze_available: user.streak_freeze_available,
-    achievements_earned: achievementsEarned ?? 0,
-    total_achievements: totalAchievements ?? 0,
-    challenges_completed: completedCount,
-    total_carbon_saved_kg: Math.round(carbonSavedKg * 100) / 100
-  };
+/**
+ * Shapes loaded counters into the public progress response.
+ * @returns Gamification progress payload.
+ */
+function buildProgressResponse(input: ProgressInputs) {
+  return { level: input.user.level, level_name: input.user.level_name, xp: input.user.xp, xp_to_next: getXpToNextLevel(input.user.xp), streak: input.user.streak_count, streak_max: input.user.streak_max, freeze_available: input.user.streak_freeze_available, achievements_earned: input.achievementsEarned, total_achievements: input.totalAchievements, challenges_completed: input.completedCount, total_carbon_saved_kg: Math.round(input.carbonSavedKg * 100) / 100 };
 }
 
 /**

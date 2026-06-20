@@ -3,6 +3,7 @@
  */
 import { supabaseAdmin } from "../config/supabase";
 import { addXP, checkAchievements } from "./gamification.service";
+import { invalidateLifetimeCarbonSaved } from "./impact.service";
 import { incrementStreak } from "./streak.service";
 import { updateUserTeamStats } from "./team.service";
 import {
@@ -140,36 +141,83 @@ export async function completeChallenge(
   userId: string,
   challengeId: string
 ): Promise<ChallengeCompletionResult> {
-  const assignment = await resolveActionableAssignment(userId, challengeId);
+  return await completeChallengeWorkflow(userId, challengeId);
+}
 
+/**
+ * Executes the extracted completeChallenge service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `completeChallenge`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+async function completeChallengeWorkflow(
+  userId: string,
+  challengeId: string
+): Promise<ChallengeCompletionResult> {
+  const assignment = await resolveActionableAssignment(userId, challengeId);
+  assertAcceptedAssignment(assignment);
+
+  const challenge = await getChallengeById(assignment.challenge_id);
+  const award = await awardChallengeCompletion(userId, challenge);
+
+  await persistChallengeCompletion(assignment.id, award.xp_earned);
+  await updateUserTeamStats(userId);
+  await invalidateLifetimeCarbonSaved(userId);
+
+  const achievementsEarned = await checkAchievements(userId);
+  const updatedUser = await loadUpdatedUserXp(userId);
+
+  return buildChallengeCompletionResult(award, updatedUser, achievementsEarned);
+}
+
+/**
+ * Validates that an assignment can be completed.
+ * @returns Nothing when the assignment is accepted.
+ * @throws When the assignment is not accepted.
+ */
+function assertAcceptedAssignment(assignment: UserChallenge): void {
   if (assignment.status !== "accepted") {
     throw new Error("Challenge must be accepted before it can be completed");
   }
+}
 
-  const challenge = await getChallengeById(assignment.challenge_id);
-
+/**
+ * Awards XP and streak credit for a completed challenge.
+ * @returns XP, streak, and total earned values used by the response.
+ */
+async function awardChallengeCompletion(userId: string, challenge: Challenge) {
   const xpResult = await addXP(userId, challenge.xp_reward);
   const streakResult = await incrementStreak(userId);
+  const xp_earned = challenge.xp_reward + (streakResult.milestone_bonus_xp ?? 0);
 
-  const baseXp = challenge.xp_reward;
-  const milestoneBonusXp = streakResult.milestone_bonus_xp ?? 0;
-  const xp_earned = baseXp + milestoneBonusXp;
+  return { xpResult, streakResult, xp_earned };
+}
 
+/**
+ * Marks an assignment completed with earned XP.
+ * @returns Resolves when the assignment update succeeds.
+ * @throws When the assignment cannot be updated.
+ */
+async function persistChallengeCompletion(assignmentId: string, xpEarned: number): Promise<void> {
   const { error: assignmentError } = await supabaseAdmin
     .from("user_challenges")
     .update({
       status: "completed",
       completed_at: new Date().toISOString(),
-      xp_earned
+      xp_earned: xpEarned
     })
-    .eq("id", assignment.id);
+    .eq("id", assignmentId);
 
   if (assignmentError) {
     throw new Error("Unable to complete challenge");
   }
+}
 
-  await updateUserTeamStats(userId);
-  const achievementsEarned = await checkAchievements(userId);
+/**
+ * Loads the user's XP and level after completion side effects.
+ * @returns Updated XP and level values.
+ * @throws When the user XP cannot be loaded.
+ */
+async function loadUpdatedUserXp(userId: string): Promise<{ xp: number; level: number }> {
   const { data: updatedUser, error: updatedUserError } = await supabaseAdmin
     .from("users")
     .select("xp,level")
@@ -180,12 +228,24 @@ export async function completeChallenge(
     throw new Error("Unable to load updated user XP");
   }
 
+  return updatedUser;
+}
+
+/**
+ * Shapes completion side-effect results into the public response.
+ * @returns The challenge completion payload.
+ */
+function buildChallengeCompletionResult(
+  award: Awaited<ReturnType<typeof awardChallengeCompletion>>,
+  updatedUser: Awaited<ReturnType<typeof loadUpdatedUserXp>>,
+  achievementsEarned: Achievement[]
+): ChallengeCompletionResult {
   return {
-    xp_earned,
+    xp_earned: award.xp_earned,
     new_total_xp: updatedUser.xp,
-    streak_count: streakResult.streak_count,
-    is_streak_milestone: streakResult.is_milestone,
-    level_up: xpResult.level_up || updatedUser.level > xpResult.new_level,
+    streak_count: award.streakResult.streak_count,
+    is_streak_milestone: award.streakResult.is_milestone,
+    level_up: award.xpResult.level_up || updatedUser.level > award.xpResult.new_level,
     achievements_earned: achievementsEarned
   };
 }
@@ -231,40 +291,116 @@ export async function getChallengeHistory(
   page: number,
   limit: number
 ) {
+  return await getChallengeHistoryWorkflow(userId, page, limit);
+}
+
+/**
+ * Executes the extracted getChallengeHistory service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `getChallengeHistory`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+async function getChallengeHistoryWorkflow(
+  userId: string,
+  page: number,
+  limit: number
+) {
+  const pagination = getChallengeHistoryPagination(page, limit);
+  const history = await loadChallengeHistoryAssignments(userId, pagination);
+  const challengeIds = getHistoryChallengeIds(history.data ?? []);
+  const challengesById = await getChallengesById(challengeIds);
+
+  return buildChallengeHistoryResponse(history, challengesById, pagination);
+}
+
+/**
+ * Normalizes challenge history pagination inputs.
+ * @returns Safe page, limit, and range bounds.
+ */
+function getChallengeHistoryPagination(page: number, limit: number) {
   const safePage = Math.max(page, 1);
   const safeLimit = Math.min(Math.max(limit, 1), 100);
-  const from = (safePage - 1) * safeLimit;
-  const to = from + safeLimit - 1;
 
+  return {
+    safePage,
+    safeLimit,
+    from: (safePage - 1) * safeLimit,
+    to: safePage * safeLimit - 1
+  };
+}
+
+/**
+ * Loads paginated user challenge assignments.
+ * @returns Assignment rows with exact count metadata.
+ * @throws When history cannot be loaded.
+ */
+async function loadChallengeHistoryAssignments(
+  userId: string,
+  pagination: ReturnType<typeof getChallengeHistoryPagination>
+) {
   const { data, error, count } = await supabaseAdmin
     .from("user_challenges")
     .select("*", { count: "exact" })
     .eq("user_id", userId)
     .order("date_assigned", { ascending: false })
-    .range(from, to);
+    .range(pagination.from, pagination.to);
 
   if (error) {
     throw new Error("Unable to load challenge history");
   }
 
-  const challengeIds = [...new Set((data ?? []).map((row) => row.challenge_id))];
-  const challengesById = await getChallengesById(challengeIds);
+  return { data, count };
+}
+
+/**
+ * Collects distinct challenge ids from assignment history.
+ * @returns Unique challenge ids for hydration.
+ */
+function getHistoryChallengeIds(data: UserChallenge[]): string[] {
+  return [...new Set(data.map((row) => row.challenge_id))];
+}
+
+/**
+ * Shapes history assignments and pagination into the existing response.
+ * @returns Challenge history response with hydrated challenge data.
+ */
+function buildChallengeHistoryResponse(
+  history: Awaited<ReturnType<typeof loadChallengeHistoryAssignments>>,
+  challengesById: Awaited<ReturnType<typeof getChallengesById>>,
+  pagination: ReturnType<typeof getChallengeHistoryPagination>
+) {
+  return {
+    challenges: (history.data ?? []).map((assignment) => buildHistoryItem(assignment, challengesById)),
+    pagination: buildHistoryPaginationMeta(history.count, pagination)
+  };
+}
+
+/**
+ * Hydrates one history assignment with challenge and savings details.
+ * @returns One challenge history item.
+ */
+function buildHistoryItem(assignment: UserChallenge, challengesById: Map<string, Challenge>) {
+  const challenge = challengesById.get(assignment.challenge_id) ?? null;
 
   return {
-    challenges: (data ?? []).map((assignment) => {
-      const challenge = challengesById.get(assignment.challenge_id) ?? null;
-      return {
-        ...assignment,
-        challenge,
-        carbon_saved_kg: challenge ? Number(challenge.carbon_save_kg) || 0 : 0
-      };
-    }),
-    pagination: {
-      page: safePage,
-      limit: safeLimit,
-      total: count ?? 0,
-      total_pages: Math.ceil((count ?? 0) / safeLimit)
-    }
+    ...assignment,
+    challenge,
+    carbon_saved_kg: challenge ? Number(challenge.carbon_save_kg) || 0 : 0
+  };
+}
+
+/**
+ * Builds pagination metadata for the history response.
+ * @returns Pagination totals and current page values.
+ */
+function buildHistoryPaginationMeta(
+  count: number | null,
+  pagination: ReturnType<typeof getChallengeHistoryPagination>
+) {
+  return {
+    page: pagination.safePage,
+    limit: pagination.safeLimit,
+    total: count ?? 0,
+    total_pages: Math.ceil((count ?? 0) / pagination.safeLimit)
   };
 }
 
@@ -301,58 +437,114 @@ async function assignBestChallenge(
   excludedChallengeIds: string | string[] = [],
   altOffset = 0
 ): Promise<ChallengeWithContext> {
-  const excluded = Array.isArray(excludedChallengeIds)
-    ? excludedChallengeIds
-    : [excludedChallengeIds];
+  return await assignBestChallengeWorkflow(userId, dateAssigned, excludedChallengeIds, altOffset);
+}
 
-  const [
-    highestCategory,
-    recentHistory,
-    difficultyPreference,
-    { data: challenges, error: challengesError }
-  ] = await Promise.all([
-    getHighestCarbonArea(userId),
-    getRecentChallengeHistory(userId),
-    getDifficultyPreference(userId),
-    supabaseAdmin.from("challenges").select("*").eq("is_active", true)
-  ]);
+/**
+ * Executes the extracted assignBestChallenge service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `assignBestChallenge`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+async function assignBestChallengeWorkflow(
+  userId: string,
+  dateAssigned: string,
+  excludedChallengeIds: string | string[] = [],
+  altOffset = 0
+): Promise<ChallengeWithContext> {
+  const inputs = await loadChallengeAssignmentInputs(userId);
+  const selectedChallenge = selectBestChallenge(inputs, excludedChallengeIds, altOffset);
+  const assignment = await createChallengeAssignment(userId, selectedChallenge.id, dateAssigned);
 
-  if (challengesError || !challenges || challenges.length === 0) {
+  return await buildAssignedChallenge(userId, dateAssigned, inputs.highestCategory, selectedChallenge, assignment);
+}
+
+/**
+ * Loads inputs needed for challenge assignment scoring.
+ * @returns Highest category, recent history, difficulty, and active challenges.
+ * @throws When no active challenges are available.
+ */
+async function loadChallengeAssignmentInputs(userId: string) {
+  const [highestCategory, recentHistory, difficultyPreference, challengeResult] =
+    await Promise.all([
+      getHighestCarbonArea(userId),
+      getRecentChallengeHistory(userId),
+      getDifficultyPreference(userId),
+      supabaseAdmin.from("challenges").select("*").eq("is_active", true)
+    ]);
+
+  if (challengeResult.error || !challengeResult.data || challengeResult.data.length === 0) {
     throw new Error("No active challenges available");
   }
 
-  const eligibleChallenges = challenges.filter(
-    (challenge) => !excluded.includes(challenge.id)
-  );
-  const challengePool =
-    eligibleChallenges.length > 0 ? eligibleChallenges : challenges;
+  return { highestCategory, recentHistory, difficultyPreference, challenges: challengeResult.data };
+}
 
-  const scoredChallenges = challengePool
-    .map((challenge) => ({
-      challenge,
-      score: scoreChallenge(
-        challenge,
-        highestCategory,
-        difficultyPreference,
-        recentHistory
-      )
-    }))
-    .sort((left, right) => right.score - left.score);
-
+/**
+ * Picks the highest-scoring eligible challenge with alternative offset support.
+ * @returns The selected challenge.
+ * @throws When no challenge can be selected.
+ */
+function selectBestChallenge(
+  inputs: Awaited<ReturnType<typeof loadChallengeAssignmentInputs>>,
+  excludedChallengeIds: string | string[],
+  altOffset: number
+): Challenge {
+  const challengePool = getEligibleChallengePool(inputs.challenges, excludedChallengeIds);
+  const scoredChallenges = scoreChallengePool(inputs, challengePool);
   const selectedChallenge = scoredChallenges[altOffset]?.challenge ?? scoredChallenges[0]?.challenge;
 
   if (!selectedChallenge) {
     throw new Error("No alternative challenges available");
   }
 
+  return selectedChallenge;
+}
+
+/**
+ * Filters out excluded challenges while preserving the original fallback to all challenges.
+ * @returns Eligible challenges or the original challenge list when none remain.
+ */
+function getEligibleChallengePool(challenges: Challenge[], excludedChallengeIds: string | string[]) {
+  const excluded = Array.isArray(excludedChallengeIds) ? excludedChallengeIds : [excludedChallengeIds];
+  const eligibleChallenges = challenges.filter((challenge) => !excluded.includes(challenge.id));
+
+  return eligibleChallenges.length > 0 ? eligibleChallenges : challenges;
+}
+
+/**
+ * Scores and sorts a challenge pool by suitability.
+ * @returns Descending challenge scores.
+ */
+function scoreChallengePool(
+  inputs: Awaited<ReturnType<typeof loadChallengeAssignmentInputs>>,
+  challengePool: Challenge[]
+) {
+  return challengePool
+    .map((challenge) => ({
+      challenge,
+      score: scoreChallenge(
+        challenge,
+        inputs.highestCategory,
+        inputs.difficultyPreference,
+        inputs.recentHistory
+      )
+    }))
+    .sort((left, right) => right.score - left.score);
+}
+
+/**
+ * Inserts the pending daily challenge assignment.
+ * @returns The created user challenge assignment.
+ * @throws When the assignment cannot be created.
+ */
+async function createChallengeAssignment(
+  userId: string,
+  challengeId: string,
+  dateAssigned: string
+): Promise<UserChallenge> {
   const { data: assignment, error: assignmentError } = await supabaseAdmin
     .from("user_challenges")
-    .insert({
-      user_id: userId,
-      challenge_id: selectedChallenge.id,
-      date_assigned: dateAssigned,
-      status: "pending"
-    })
+    .insert({ user_id: userId, challenge_id: challengeId, date_assigned: dateAssigned, status: "pending" })
     .select("*")
     .single<UserChallenge>();
 
@@ -360,19 +552,49 @@ async function assignBestChallenge(
     throw new Error("Unable to assign daily challenge");
   }
 
+  return assignment;
+}
+
+/**
+ * Hydrates a newly assigned challenge with UI context.
+ * @returns The assigned challenge response payload.
+ */
+async function buildAssignedChallenge(
+  userId: string,
+  dateAssigned: string,
+  highestCategory: CarbonCategory,
+  selectedChallenge: Challenge,
+  assignment: UserChallenge
+): Promise<ChallengeWithContext> {
   const carbonSaveKg = Number(selectedChallenge.carbon_save_kg);
   const [participants, streakWindow] = await Promise.all([
     countTodaysParticipants(selectedChallenge.id, dateAssigned),
     loadStreakWindow(userId, dateAssigned)
   ]);
 
+  return buildChallengeWithContext(selectedChallenge, assignment, highestCategory, carbonSaveKg, participants, streakWindow, dateAssigned);
+}
+
+/**
+ * Shapes an assigned challenge into the existing contextual response.
+ * @returns Challenge with personalization, tips, equivalency, and streak context.
+ */
+function buildChallengeWithContext(
+  challenge: Challenge,
+  assignment: UserChallenge,
+  highestCategory: CarbonCategory,
+  carbonSaveKg: number,
+  participants: number,
+  streakWindow: Awaited<ReturnType<typeof loadStreakWindow>>,
+  dateAssigned: string
+): ChallengeWithContext {
   return {
-    ...selectedChallenge,
-    emoji: getChallengeEmoji(selectedChallenge),
+    ...challenge,
+    emoji: getChallengeEmoji(challenge),
     assignment,
     personalized_context: buildPersonalizedContext(highestCategory, carbonSaveKg),
     why: buildPersonalizedContext(highestCategory, carbonSaveKg),
-    tips: buildTips(selectedChallenge.category, selectedChallenge.tips),
+    tips: buildTips(challenge.category, challenge.tips),
     equivalency: buildEquivalency(carbonSaveKg),
     participants_today: participants,
     streak_last_14: buildStreakLast14(streakWindow, dateAssigned)
@@ -552,8 +774,30 @@ async function getChallengesById(challengeIds: string[]): Promise<Map<string, Ch
 }
 
 async function getHighestCarbonArea(userId: string): Promise<CarbonCategory> {
-  const periodStart = currentIndiaMonthStart();
+  return await getHighestCarbonAreaWorkflow(userId);
+}
 
+/**
+ * Executes the extracted getHighestCarbonArea service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `getHighestCarbonArea`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+async function getHighestCarbonAreaWorkflow(userId: string): Promise<CarbonCategory> {
+  const summary = await loadMonthlyCarbonAreaSummary(userId);
+
+  if (summary) {
+    return getTopCarbonCategory(summary);
+  }
+
+  return await loadOnboardingHighestCarbonArea(userId);
+}
+
+/**
+ * Loads this month's carbon category summary for challenge targeting.
+ * @returns Monthly summary row or null when absent.
+ */
+async function loadMonthlyCarbonAreaSummary(userId: string) {
+  const periodStart = currentIndiaMonthStart();
   const { data: summary } = await supabaseAdmin
     .from("carbon_summaries")
     .select("food_kg,transport_kg,home_kg,shopping_kg,travel_kg,other_kg")
@@ -562,21 +806,31 @@ async function getHighestCarbonArea(userId: string): Promise<CarbonCategory> {
     .eq("period_start", periodStart)
     .maybeSingle();
 
-  if (summary) {
-    const entries = [
-      ["food", Number(summary.food_kg)],
-      ["transport", Number(summary.transport_kg)],
-      ["home", Number(summary.home_kg)],
-      ["shopping", Number(summary.shopping_kg)],
-      ["travel", Number(summary.travel_kg)],
-      ["other", Number(summary.other_kg)]
-    ] as Array<[CarbonCategory, number]>;
+  return summary;
+}
 
-    return entries.reduce((highest, current) =>
-      current[1] > highest[1] ? current : highest
-    )[0];
-  }
+/**
+ * Finds the highest category in a monthly carbon summary row.
+ * @returns The category with the largest kilogram value.
+ */
+function getTopCarbonCategory(summary: NonNullable<Awaited<ReturnType<typeof loadMonthlyCarbonAreaSummary>>>): CarbonCategory {
+  const entries = [
+    ["food", Number(summary.food_kg)],
+    ["transport", Number(summary.transport_kg)],
+    ["home", Number(summary.home_kg)],
+    ["shopping", Number(summary.shopping_kg)],
+    ["travel", Number(summary.travel_kg)],
+    ["other", Number(summary.other_kg)]
+  ] as Array<[CarbonCategory, number]>;
 
+  return entries.reduce((highest, current) => current[1] > highest[1] ? current : highest)[0];
+}
+
+/**
+ * Loads onboarding fallback for highest carbon category.
+ * @returns Onboarding category or shopping as the original fallback.
+ */
+async function loadOnboardingHighestCarbonArea(userId: string): Promise<CarbonCategory> {
   const { data: user } = await supabaseAdmin
     .from("users")
     .select("onboarding_data")

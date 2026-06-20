@@ -5,7 +5,7 @@ import { z } from "zod";
 import { supabaseAdmin } from "../config/supabase";
 import type { CarbonCategory, CopilotConversation, CopilotMessage } from "../types";
 import { getEquivalencies } from "../utils/equivalencies";
-import { chatWithAI, extractJson } from "./ai.service";
+import { structuredCopilotReply } from "./ai.service";
 
 type UserContext = {
   name: string;
@@ -38,51 +38,143 @@ export async function chat(
   userId: string,
   userMessage: string
 ): Promise<ChatResult> {
+  return await chatWorkflow(userId, userMessage);
+}
+
+/**
+ * Executes the extracted chat service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `chat`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+async function chatWorkflow(
+  userId: string,
+  userMessage: string
+): Promise<ChatResult> {
+  const { context, conversation } = await loadChatContext(userId);
+  const history = conversation.messages.slice(-16);
+  const userEntry = buildUserMessage(userMessage);
+  const { response, suggestions } = await getAssistantResponse(context, userMessage, history);
+  const assistantEntry = buildAssistantMessage(response);
+
+  await saveChatMessages(conversation, userEntry, assistantEntry);
+
+  return { response, suggestions };
+}
+
+/**
+ * Loads the profile context and persisted conversation required for a chat turn.
+ * @returns The user context and existing or newly created conversation.
+ * @throws When context or conversation persistence cannot be loaded.
+ */
+async function loadChatContext(userId: string): Promise<{
+  context: UserContext;
+  conversation: CopilotConversation;
+}> {
   const [context, conversation] = await Promise.all([
     getUserContext(userId),
     getOrCreateConversation(userId)
   ]);
-  const history = conversation.messages.slice(-16);
-  const now = new Date().toISOString();
-  const userEntry: CopilotMessage = {
+
+  return { context, conversation };
+}
+
+/**
+ * Builds the user-side persisted chat message.
+ * @returns A Copilot message with the current timestamp.
+ */
+function buildUserMessage(userMessage: string): CopilotMessage {
+  return {
     role: "user",
     content: userMessage,
-    timestamp: now
+    timestamp: new Date().toISOString()
   };
+}
 
-  const assistantText =
-    (
-      await chatWithAI(
-        buildSystemPrompt(context),
-        userMessage,
-        history
-          .filter(
-            (message): message is CopilotMessage & { role: "user" | "assistant" } =>
-              message.role === "user" || message.role === "assistant"
-          )
-          .map((message) => ({
-            role: message.role,
-            content: message.content
-          }))
-      )
-    ).trim() ||
+/**
+ * Requests the assistant response and follow-up suggestions in a single Gemini call.
+ * @returns Trimmed AI reply and a 1-3 element suggestions array, or the original fallbacks.
+ * @throws When the upstream AI call fails or returns malformed JSON.
+ */
+async function getAssistantResponse(
+  context: UserContext,
+  userMessage: string,
+  history: CopilotMessage[]
+): Promise<{ response: string; suggestions: string[] }> {
+  const fallbackResponse =
     "I can help with that once I have a little more carbon data from your recent activity.";
-  const assistantEntry: CopilotMessage = {
+  const fallbackSuggestions = [
+    `How can I reduce my ${context.top_category} footprint?`,
+    "What challenge should I do next?",
+    "How does this compare to the average American?"
+  ];
+
+  try {
+    const structured = (await structuredCopilotReply(
+      buildSystemPrompt(context),
+      userMessage,
+      toAiHistory(history)
+    )) as { response?: unknown; suggestions?: unknown };
+
+    const response =
+      typeof structured?.response === "string" && structured.response.trim().length > 0
+        ? structured.response.trim()
+        : fallbackResponse;
+
+    const parsed = suggestionsSchema.safeParse(structured?.suggestions);
+    const suggestions = parsed.success ? parsed.data.suggestions : fallbackSuggestions;
+
+    return { response, suggestions };
+  } catch {
+    return { response: fallbackResponse, suggestions: fallbackSuggestions };
+  }
+}
+
+/**
+ * Converts persisted Copilot history into the role/content shape accepted by AI.
+ * @returns User and assistant messages only, preserving original order.
+ */
+function toAiHistory(history: CopilotMessage[]): Array<{
+  role: "user" | "assistant";
+  content: string;
+}> {
+  return history
+    .filter(
+      (message): message is CopilotMessage & { role: "user" | "assistant" } =>
+        message.role === "user" || message.role === "assistant"
+    )
+    .map((message) => ({
+      role: message.role,
+      content: message.content
+    }));
+}
+
+/**
+ * Builds the assistant-side persisted chat message.
+ * @returns A Copilot assistant message with the current timestamp.
+ */
+function buildAssistantMessage(assistantText: string): CopilotMessage {
+  return {
     role: "assistant",
     content: assistantText,
     timestamp: new Date().toISOString()
   };
+}
 
+/**
+ * Persists the user and assistant messages onto the conversation.
+ * @returns Resolves after the existing save routine succeeds.
+ * @throws When conversation persistence fails.
+ */
+async function saveChatMessages(
+  conversation: CopilotConversation,
+  userEntry: CopilotMessage,
+  assistantEntry: CopilotMessage
+): Promise<void> {
   await saveConversationMessages(conversation.id, [
     ...conversation.messages,
     userEntry,
     assistantEntry
   ]);
-
-  return {
-    response: assistantText,
-    suggestions: await generateFollowUpSuggestions(context, userMessage, assistantText)
-  };
 }
 
 /**
@@ -186,9 +278,41 @@ async function getMonthlyCarbonSummary(userId: string): Promise<{
   monthly_kg: number;
   category_breakdown: Record<CarbonCategory, number>;
 }> {
+  return await getMonthlyCarbonSummaryWorkflow(userId);
+}
+
+/**
+ * Executes the extracted getMonthlyCarbonSummary service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `getMonthlyCarbonSummary`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+async function getMonthlyCarbonSummaryWorkflow(userId: string): Promise<{
+  monthly_kg: number;
+  category_breakdown: Record<CarbonCategory, number>;
+}> {
+  const periodStart = getCurrentMonthPeriodStart();
+  const data = await loadMonthlyCarbonSummary(userId, periodStart);
+
+  return buildMonthlyCarbonSummary(data);
+}
+
+/**
+ * Computes the first day of the current UTC month for monthly summaries.
+ * @returns The date string used by carbon_summaries.period_start.
+ */
+function getCurrentMonthPeriodStart(): string {
   const currentMonth = new Date();
   currentMonth.setUTCDate(1);
-  const periodStart = currentMonth.toISOString().slice(0, 10);
+
+  return currentMonth.toISOString().slice(0, 10);
+}
+
+/**
+ * Loads the persisted monthly carbon summary row for Copilot context.
+ * @returns The summary row or null when no row exists.
+ * @throws When Supabase returns an error.
+ */
+async function loadMonthlyCarbonSummary(userId: string, periodStart: string) {
   const { data, error } = await supabaseAdmin
     .from("carbon_summaries")
     .select("total_carbon_kg,food_kg,transport_kg,home_kg,shopping_kg,travel_kg,other_kg")
@@ -201,6 +325,17 @@ async function getMonthlyCarbonSummary(userId: string): Promise<{
     throw new Error("Unable to load Copilot carbon context");
   }
 
+  return data;
+}
+
+/**
+ * Shapes a nullable carbon summary row into Copilot's category breakdown.
+ * @returns Monthly totals with zero fallbacks for missing rows.
+ */
+function buildMonthlyCarbonSummary(data: Awaited<ReturnType<typeof loadMonthlyCarbonSummary>>): {
+  monthly_kg: number;
+  category_breakdown: Record<CarbonCategory, number>;
+} {
   return {
     monthly_kg: Number(data?.total_carbon_kg ?? 0),
     category_breakdown: {
@@ -248,6 +383,32 @@ async function getRecentChallenges(userId: string): Promise<string[]> {
 async function getOrCreateConversation(
   userId: string
 ): Promise<CopilotConversation> {
+  return await getOrCreateConversationWorkflow(userId);
+}
+
+/**
+ * Executes the extracted getOrCreateConversation service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `getOrCreateConversation`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+async function getOrCreateConversationWorkflow(
+  userId: string
+): Promise<CopilotConversation> {
+  const conversation = await findLatestConversation(userId);
+
+  if (conversation) {
+    return normalizeConversation(conversation);
+  }
+
+  return await createConversation(userId);
+}
+
+/**
+ * Finds the most recently updated Copilot conversation for a user.
+ * @returns The latest conversation or null when none exists.
+ * @throws When Supabase returns a query error.
+ */
+async function findLatestConversation(userId: string): Promise<CopilotConversation | null> {
   const { data, error } = await supabaseAdmin
     .from("copilot_conversations")
     .select("*")
@@ -260,13 +421,15 @@ async function getOrCreateConversation(
     throw new Error("Unable to load Copilot conversation");
   }
 
-  if (data) {
-    return {
-      ...data,
-      messages: normalizeMessages(data.messages)
-    };
-  }
+  return data;
+}
 
+/**
+ * Creates an empty Copilot conversation for the user.
+ * @returns The newly created conversation with an empty message list.
+ * @throws When Supabase cannot create the conversation.
+ */
+async function createConversation(userId: string): Promise<CopilotConversation> {
   const { data: created, error: createError } = await supabaseAdmin
     .from("copilot_conversations")
     .insert({
@@ -283,6 +446,17 @@ async function getOrCreateConversation(
   return {
     ...created,
     messages: []
+  };
+}
+
+/**
+ * Normalizes stored messages on an existing conversation.
+ * @returns The conversation with safe Copilot message objects.
+ */
+function normalizeConversation(conversation: CopilotConversation): CopilotConversation {
+  return {
+    ...conversation,
+    messages: normalizeMessages(conversation.messages)
   };
 }
 
@@ -333,32 +507,6 @@ RULES:
 9. If the user seems discouraged, emphasize their progress and small wins
 10. Never make up data you don't have - say "I don't have that data yet" if unsure
 `.trim();
-}
-
-async function generateFollowUpSuggestions(
-  context: UserContext,
-  userMessage: string,
-  assistantResponse: string
-): Promise<string[]> {
-  try {
-    const response = await chatWithAI(
-      "Return JSON only: { \"suggestions\": [string, string, string] }. Suggest three concise follow-up prompts for a climate coaching chat.",
-      JSON.stringify({
-        top_category: context.top_category,
-        user_message: userMessage,
-        assistant_response: assistantResponse
-      })
-    );
-    const parsed = suggestionsSchema.parse(JSON.parse(extractJson(response)));
-
-    return parsed.suggestions;
-  } catch {
-    return [
-      `How can I reduce my ${context.top_category} footprint?`,
-      "What challenge should I do next?",
-      "How does this compare to the average American?"
-    ];
-  }
 }
 
 function normalizeMessages(messages: unknown): CopilotMessage[] {

@@ -82,7 +82,27 @@ export async function joinTeam(
  * @throws Throws service, persistence, or upstream API errors for the caller to handle.
  */
 export async function getTeam(userId: string, teamId: string) {
+  return await getTeamWorkflow(userId, teamId);
+}
+
+/**
+ * Executes the extracted getTeam service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `getTeam`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+async function getTeamWorkflow(userId: string, teamId: string) {
   await verifyMembership(userId, teamId);
+  const { team, members, activeChallenge } = await loadTeamOverview(teamId);
+
+  return buildTeamDetail(team, members, activeChallenge);
+}
+
+/**
+ * Loads the team, anonymized members, and active challenge for the detail view.
+ * @returns The raw team overview data used to shape the response.
+ * @throws When the team cannot be loaded.
+ */
+async function loadTeamOverview(teamId: string) {
   const [{ data: team, error: teamError }, members, activeChallenge] =
     await Promise.all([
       supabaseAdmin.from("teams").select("*").eq("id", teamId).single<Team>(),
@@ -94,23 +114,39 @@ export async function getTeam(userId: string, teamId: string) {
     throw new Error("Team not found");
   }
 
-  const averageStreak =
-    members.length > 0
-      ? Math.round(
-          members.reduce((total, member) => total + member.streak, 0) /
-            members.length
-        )
-      : 0;
+  return { team, members, activeChallenge };
+}
 
+/**
+ * Shapes team overview data into the existing detail response.
+ * @returns Team detail with aggregate stats.
+ */
+function buildTeamDetail(
+  team: Team,
+  members: Awaited<ReturnType<typeof getAnonymizedMembers>>,
+  activeChallenge: Awaited<ReturnType<typeof getActiveTeamChallenge>>
+) {
   return {
     team,
     members,
     stats: {
       total_carbon_saved: Number(team.total_carbon_saved_kg),
-      average_streak: averageStreak,
+      average_streak: calculateAverageStreak(members),
       active_challenge: activeChallenge
     }
   };
+}
+
+/**
+ * Calculates the rounded average streak for anonymized team members.
+ * @returns Average streak or zero when no members exist.
+ */
+function calculateAverageStreak(members: Awaited<ReturnType<typeof getAnonymizedMembers>>): number {
+  return members.length > 0
+    ? Math.round(
+        members.reduce((total, member) => total + member.streak, 0) / members.length
+      )
+    : 0;
 }
 
 /**
@@ -123,53 +159,107 @@ export async function getLeaderboard(
   teamId: string,
   period: LeaderboardPeriod
 ) {
+  return await getLeaderboardWorkflow(userId, teamId, period);
+}
+
+/**
+ * Executes the extracted getLeaderboard service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `getLeaderboard`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+async function getLeaderboardWorkflow(
+  userId: string,
+  teamId: string,
+  period: LeaderboardPeriod
+) {
   await verifyMembership(userId, teamId);
-  const cacheKey = `team:${teamId}:leaderboard:${period}`;
-  const cached = redisEnabled && redis ? await redis!.get(cacheKey) : null;
+  const cacheKey = getLeaderboardCacheKey(teamId, period);
+  const cached = await getCachedLeaderboard(cacheKey);
 
   if (cached) {
-    return JSON.parse(cached) as {
-      period: LeaderboardPeriod;
-      leaderboard: Array<{
-        rank: number;
-        display_name: string;
-        avatar: string | null;
-        carbon_saved_kg: number;
-        challenges_completed: number;
-        streak: number;
-      }>;
-    };
+    return cached;
   }
 
+  const payload = await buildLeaderboardPayload(teamId, period);
+  await cacheLeaderboardPayload(cacheKey, payload);
+
+  return payload;
+}
+
+/**
+ * Builds the Redis cache key for a team leaderboard.
+ * @returns The stable cache key for team, period, and leaderboard scope.
+ */
+function getLeaderboardCacheKey(teamId: string, period: LeaderboardPeriod): string {
+  return `team:${teamId}:leaderboard:${period}`;
+}
+
+/**
+ * Reads a cached leaderboard payload when Redis is enabled.
+ * @returns Parsed leaderboard payload or null when not cached.
+ */
+async function getCachedLeaderboard(cacheKey: string) {
+  const cached = redisEnabled && redis ? await redis!.get(cacheKey) : null;
+
+  return cached ? JSON.parse(cached) as Awaited<ReturnType<typeof buildLeaderboardPayload>> : null;
+}
+
+/**
+ * Builds leaderboard rows and ranks for a team period.
+ * @returns The uncached leaderboard response payload.
+ */
+async function buildLeaderboardPayload(teamId: string, period: LeaderboardPeriod) {
   const members = await getTeamMembersWithUsers(teamId);
   const sinceDate = getPeriodStart(period);
   const leaderboardRows = await Promise.all(
-    members.map(async (member, index) => {
-      const stats = await getMemberChallengeStats(member.user_id, sinceDate);
-
-      return {
-        rank: 0,
-        display_name:
-          member.role === "admin"
-            ? "Team Admin"
-            : `Member #${index + 1}`,
-        avatar: member.user.avatar_url,
-        carbon_saved_kg: stats.carbon_saved_kg,
-        challenges_completed: stats.challenges_completed,
-        streak: member.user.streak_count
-      };
-    })
+    members.map((member, index) => buildLeaderboardRow(member, index, sinceDate))
   );
-  const ranked = leaderboardRows
+
+  return { period, leaderboard: rankLeaderboardRows(leaderboardRows) };
+}
+
+/**
+ * Builds one leaderboard row from a member and period filter.
+ * @returns A row with rank left unset for the ranking pass.
+ */
+async function buildLeaderboardRow(
+  member: Awaited<ReturnType<typeof getTeamMembersWithUsers>>[number],
+  index: number,
+  sinceDate: string | undefined
+) {
+  const stats = await getMemberChallengeStats(member.user_id, sinceDate);
+
+  return {
+    rank: 0,
+    display_name: member.role === "admin" ? "Team Admin" : `Member #${index + 1}`,
+    avatar: member.user.avatar_url,
+    carbon_saved_kg: stats.carbon_saved_kg,
+    challenges_completed: stats.challenges_completed,
+    streak: member.user.streak_count
+  };
+}
+
+/**
+ * Sorts leaderboard rows by carbon saved and assigns one-based ranks.
+ * @returns Ranked leaderboard rows.
+ */
+function rankLeaderboardRows(rows: Array<Awaited<ReturnType<typeof buildLeaderboardRow>>>) {
+  return rows
     .sort((left, right) => right.carbon_saved_kg - left.carbon_saved_kg)
     .map((row, index) => ({ ...row, rank: index + 1 }));
-  const payload = { period, leaderboard: ranked };
+}
 
+/**
+ * Stores a leaderboard payload when Redis caching is enabled.
+ * @returns Resolves after cache write or immediately when disabled.
+ */
+async function cacheLeaderboardPayload(
+  cacheKey: string,
+  payload: Awaited<ReturnType<typeof buildLeaderboardPayload>>
+): Promise<void> {
   if (redisEnabled && redis) {
     await redis!.set(cacheKey, JSON.stringify(payload), "EX", leaderboardCacheTtlSeconds);
   }
-
-  return payload;
 }
 
 /**
@@ -179,6 +269,27 @@ export async function getLeaderboard(
  * @throws Throws service, persistence, or upstream API errors for the caller to handle.
  */
 export async function getMyTeams(userId: string) {
+  return await getMyTeamsWorkflow(userId);
+}
+
+/**
+ * Executes the extracted getMyTeams service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `getMyTeams`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+async function getMyTeamsWorkflow(userId: string) {
+  const memberships = await loadTeamMemberships(userId);
+  const teams = await Promise.all(memberships.map(loadMembershipTeam));
+
+  return filterLoadedTeams(teams);
+}
+
+/**
+ * Loads all team memberships for the current user.
+ * @returns Membership records used to hydrate team details.
+ * @throws When memberships cannot be loaded.
+ */
+async function loadTeamMemberships(userId: string) {
   const { data: memberships, error } = await supabaseAdmin
     .from("team_memberships")
     .select("team_id,role,joined_at")
@@ -188,26 +299,38 @@ export async function getMyTeams(userId: string) {
     throw new Error("Unable to load your teams");
   }
 
-  const teams = await Promise.all(
-    memberships.map(async (membership) => {
-      const { data: team, error: teamError } = await supabaseAdmin
-        .from("teams")
-        .select("*")
-        .eq("id", membership.team_id)
-        .single<Team>();
+  return memberships;
+}
 
-      if (teamError || !team) {
-        return null;
-      }
+/**
+ * Hydrates one membership with its team record.
+ * @returns The team with role metadata, or null when the team is missing.
+ */
+async function loadMembershipTeam(
+  membership: Awaited<ReturnType<typeof loadTeamMemberships>>[number]
+) {
+  const { data: team, error: teamError } = await supabaseAdmin
+    .from("teams")
+    .select("*")
+    .eq("id", membership.team_id)
+    .single<Team>();
 
-      return {
-        ...team,
-        role: membership.role,
-        joined_at: membership.joined_at
-      };
-    })
-  );
+  if (teamError || !team) {
+    return null;
+  }
 
+  return {
+    ...team,
+    role: membership.role,
+    joined_at: membership.joined_at
+  };
+}
+
+/**
+ * Removes missing teams while preserving the existing team metadata shape.
+ * @returns Only successfully loaded teams.
+ */
+function filterLoadedTeams(teams: Array<Awaited<ReturnType<typeof loadMembershipTeam>>>) {
   return teams.filter((team): team is Team & { role: string; joined_at: string } => Boolean(team));
 }
 
@@ -381,6 +504,34 @@ async function getMemberChallengeStats(
   userId: string,
   sinceDate: string | undefined
 ): Promise<{ carbon_saved_kg: number; challenges_completed: number }> {
+  return await getMemberChallengeStatsWorkflow(userId, sinceDate);
+}
+
+/**
+ * Executes the extracted getMemberChallengeStats service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `getMemberChallengeStats`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+async function getMemberChallengeStatsWorkflow(
+  userId: string,
+  sinceDate: string | undefined
+): Promise<{ carbon_saved_kg: number; challenges_completed: number }> {
+  const completions = await loadCompletedChallenges(userId, sinceDate);
+
+  if (completions.length === 0) {
+    return { carbon_saved_kg: 0, challenges_completed: 0 };
+  }
+
+  const challenges = await loadChallengeSavings(completions);
+
+  return buildMemberChallengeStats(completions, challenges);
+}
+
+/**
+ * Loads completed challenge ids for a member and optional period start.
+ * @returns Completed challenge assignment rows, or an empty list on no data.
+ */
+async function loadCompletedChallenges(userId: string, sinceDate: string | undefined) {
   let query = supabaseAdmin
     .from("user_challenges")
     .select("challenge_id,date_assigned")
@@ -393,10 +544,17 @@ async function getMemberChallengeStats(
 
   const { data: completions, error } = await query;
 
-  if (error || !completions || completions.length === 0) {
-    return { carbon_saved_kg: 0, challenges_completed: 0 };
-  }
+  return error || !completions ? [] : completions;
+}
 
+/**
+ * Loads carbon savings for completed challenge ids.
+ * @returns Challenge saving rows used for member stats.
+ * @throws When challenge savings cannot be loaded.
+ */
+async function loadChallengeSavings(
+  completions: Awaited<ReturnType<typeof loadCompletedChallenges>>
+) {
   const challengeIds = completions.map((completion) => completion.challenge_id);
   const { data: challenges, error: challengesError } = await supabaseAdmin
     .from("challenges")
@@ -407,12 +565,20 @@ async function getMemberChallengeStats(
     throw new Error("Unable to load challenge savings");
   }
 
+  return challenges;
+}
+
+/**
+ * Aggregates completed challenges into the existing member stats shape.
+ * @returns Carbon saved and completed challenge count.
+ */
+function buildMemberChallengeStats(
+  completions: Awaited<ReturnType<typeof loadCompletedChallenges>>,
+  challenges: Awaited<ReturnType<typeof loadChallengeSavings>>
+) {
   return {
     carbon_saved_kg: Math.round(
-      challenges.reduce(
-        (total, challenge) => total + Number(challenge.carbon_save_kg),
-        0
-      ) * 100
+      challenges.reduce((total, challenge) => total + Number(challenge.carbon_save_kg), 0) * 100
     ) / 100,
     challenges_completed: completions.length
   };

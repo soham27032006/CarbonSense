@@ -12,7 +12,8 @@ import {
 } from "plaid";
 import { env } from "../config/env";
 import { supabaseAdmin } from "../config/supabase";
-import { classifyTransaction, refreshCarbonSummaries } from "./carbon.service";
+import { PLAID_REQUEST_TIMEOUT_MS } from "../config/timeouts";
+import { classifyTransactionsBatch, refreshCarbonSummaries } from "./carbon.service";
 import type { BankConnection } from "../types";
 
 type BankConnectionRecord = BankConnection;
@@ -38,6 +39,7 @@ try {
     new Configuration({
       basePath: PlaidEnvironments[env.PLAID_ENV],
       baseOptions: {
+        timeout: PLAID_REQUEST_TIMEOUT_MS,
         headers: {
           "PLAID-CLIENT-ID": env.PLAID_CLIENT_ID,
           "PLAID-SECRET": env.PLAID_SECRET
@@ -179,20 +181,55 @@ export async function exchangePublicToken(
   institutionId: string,
   institutionName: string
 ): Promise<PublicConnection & { initial_sync: SyncResult }> {
-  const exchangeResponse = await getPlaidClient().itemPublicTokenExchange({
-    public_token: publicToken
-  });
+  return await exchangePublicTokenWorkflow(userId, publicToken, institutionId, institutionName);
+}
+
+/**
+ * Executes the extracted exchangePublicToken service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `exchangePublicToken`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+async function exchangePublicTokenWorkflow(
+  userId: string,
+  publicToken: string,
+  institutionId: string,
+  institutionName: string
+): Promise<PublicConnection & { initial_sync: SyncResult }> {
+  const token = await exchangePlaidPublicToken(publicToken);
+  const connection = await saveBankConnection(userId, institutionName, token);
+  const initialSync = await syncTransactions(userId, connection.id);
+
+  return buildPublicConnectionWithSync(userId, institutionName, token.itemId, connection, initialSync);
+}
+
+/**
+ * Exchanges a Plaid public token for an access token and item id.
+ * @returns Plaid token values needed to persist the connection.
+ * @throws When Plaid token exchange fails.
+ */
+async function exchangePlaidPublicToken(publicToken: string): Promise<{ accessToken: string; itemId: string }> {
+  const exchangeResponse = await getPlaidClient().itemPublicTokenExchange({ public_token: publicToken });
   const { access_token: accessToken, item_id: itemId } = exchangeResponse.data;
 
+  return { accessToken, itemId };
+}
+
+/**
+ * Persists an encrypted bank connection record.
+ * @returns The saved bank connection row.
+ * @throws When the connection cannot be saved.
+ */
+async function saveBankConnection(
+  userId: string,
+  institutionName: string,
+  token: Awaited<ReturnType<typeof exchangePlaidPublicToken>>
+): Promise<BankConnectionRecord> {
   const { data: connection, error } = await supabaseAdmin
     .from("bank_connections")
     .insert({
-      user_id: userId,
-      plaid_access_token: encryptAccessToken(accessToken),
-      plaid_item_id: itemId,
-      institution_name: institutionName,
-      institution_logo: null,
-      status: "active"
+      user_id: userId, plaid_access_token: encryptAccessToken(token.accessToken),
+      plaid_item_id: token.itemId, institution_name: institutionName,
+      institution_logo: null, status: "active"
     })
     .select("*")
     .single<BankConnectionRecord>();
@@ -201,19 +238,25 @@ export async function exchangePublicToken(
     throw new Error("Unable to save bank connection");
   }
 
-  const initialSync = await syncTransactions(userId, connection.id);
+  return connection;
+}
 
+/**
+ * Shapes a saved connection and initial sync result into the public response.
+ * @returns Public bank connection with initial sync metadata.
+ */
+function buildPublicConnectionWithSync(
+  userId: string,
+  institutionName: string,
+  itemId: string,
+  connection: BankConnectionRecord,
+  initialSync: SyncResult
+): PublicConnection & { initial_sync: SyncResult } {
   return {
-    ...sanitizeConnection(connection),
-    initial_sync: initialSync,
-    plaid_item_id: itemId,
-    institution_name: institutionName,
-    id: connection.id,
-    user_id: userId,
-    institution_logo: connection.institution_logo,
-    status: connection.status,
-    last_synced: connection.last_synced,
-    created_at: connection.created_at,
+    ...sanitizeConnection(connection), initial_sync: initialSync, plaid_item_id: itemId,
+    institution_name: institutionName, id: connection.id, user_id: userId,
+    institution_logo: connection.institution_logo, status: connection.status,
+    last_synced: connection.last_synced, created_at: connection.created_at,
     plaid_cursor: connection.plaid_cursor
   };
 }
@@ -227,103 +270,224 @@ export async function syncTransactions(
   userId: string,
   connectionId: string
 ): Promise<SyncResult> {
-  const connection = await getOwnedConnection(userId, connectionId);
+  return await syncTransactionsWorkflow(userId, connectionId);
+}
 
+/**
+ * Executes the extracted syncTransactions service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `syncTransactions`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+async function syncTransactionsWorkflow(
+  userId: string,
+  connectionId: string
+): Promise<SyncResult> {
+  const connection = await getOwnedConnection(userId, connectionId);
+  assertConnectedBank(connection);
+
+  const state = createSyncState(connection);
+  await syncPlaidTransactionPages(userId, connectionId, state);
+  await updateBankConnectionSyncState(userId, connectionId, state.cursor);
+  await refreshAffectedCarbonSummaries(userId, state.affectedDates);
+
+  return buildSyncResult(state);
+}
+
+/**
+ * Validates that a bank connection can be synced.
+ * @returns Nothing when the connection is active.
+ * @throws When the bank connection is disconnected.
+ */
+function assertConnectedBank(connection: BankConnectionRecord): void {
   if (connection.status === "disconnected") {
     throw new Error("Bank connection is disconnected");
   }
+}
 
-  const accessToken = decryptAccessToken(connection.plaid_access_token);
-  let cursor = connection.plaid_cursor ?? undefined;
-  let hasMore = true;
-  let newTransactions = 0;
-  let totalCarbonKg = 0;
-  const affectedDates = new Set<string>();
+/**
+ * Creates mutable sync state matching the original workflow variables.
+ * @returns State used while paging through Plaid sync results.
+ */
+function createSyncState(connection: BankConnectionRecord) {
+  return {
+    accessToken: decryptAccessToken(connection.plaid_access_token),
+    cursor: connection.plaid_cursor ?? undefined,
+    hasMore: true,
+    newTransactions: 0,
+    totalCarbonKg: 0,
+    affectedDates: new Set<string>()
+  };
+}
 
-  while (hasMore) {
-    const syncResponse = await getPlaidClient().transactionsSync({
-      access_token: accessToken,
-      cursor,
-      count: 500
-    });
-    const syncData = syncResponse.data;
+/**
+ * Pages through Plaid transaction sync responses in the original order.
+ * @returns Resolves after every page has been processed.
+ */
+async function syncPlaidTransactionPages(
+  userId: string,
+  connectionId: string,
+  state: ReturnType<typeof createSyncState>
+): Promise<void> {
+  while (state.hasMore) {
+    const syncData = (await getPlaidClient().transactionsSync({
+      access_token: state.accessToken, cursor: state.cursor, count: 500
+    })).data;
 
-    for (const removedTransaction of syncData.removed) {
-      await supabaseAdmin
-        .from("transactions")
-        .update({ is_removed: true })
-        .eq("user_id", userId)
-        .eq("plaid_transaction_id", removedTransaction.transaction_id);
-    }
+    await markRemovedTransactions(userId, syncData.removed);
+    await upsertChangedTransactions(userId, connectionId, syncData, state);
+    state.cursor = syncData.next_cursor;
+    state.hasMore = syncData.has_more;
+  }
+}
 
-    for (const transaction of [...syncData.added, ...syncData.modified]) {
-      if (transaction.pending) {
-        continue;
-      }
-
-      const merchantName = getMerchantName(transaction);
-      const plaidCategory = mapPlaidCategory(transaction);
-      const classification = await classifyTransaction(
-        merchantName,
-        plaidCategory,
-        transaction.amount
-      );
-      const transactionDate = transaction.date;
-
-      const { error } = await supabaseAdmin.from("transactions").upsert(
-        {
-          user_id: userId,
-          bank_connection_id: connectionId,
-          plaid_transaction_id: transaction.transaction_id,
-          merchant_name: merchantName,
-          merchant_category: plaidCategory,
-          amount: transaction.amount,
-          currency: transaction.iso_currency_code ?? "USD",
-          carbon_kg: classification.carbon_kg,
-          carbon_category: classification.carbon_category,
-          carbon_confidence: classification.confidence,
-          carbon_source: classification.source,
-          transaction_date: transactionDate,
-          is_removed: false
-        },
-        {
-          onConflict: "plaid_transaction_id"
-        }
-      );
-
-      if (error) {
-        throw new Error("Unable to save synced transaction");
-      }
-
-      if (syncData.added.some((added) => added.transaction_id === transaction.transaction_id)) {
-        newTransactions += 1;
-        totalCarbonKg += classification.carbon_kg;
-      }
-
-      affectedDates.add(transactionDate);
-    }
-
-    cursor = syncData.next_cursor;
-    hasMore = syncData.has_more;
+/**
+ * Marks Plaid-removed transactions as removed locally.
+ * @returns Resolves after removed transactions are updated.
+ */
+async function markRemovedTransactions(userId: string, removed: Array<{ transaction_id: string }>): Promise<void> {
+  if (removed.length === 0) {
+    return;
   }
 
-  await supabaseAdmin
-    .from("bank_connections")
-    .update({
-      plaid_cursor: cursor,
-      last_synced: new Date().toISOString(),
-      status: "active"
-    })
-    .eq("id", connectionId)
-    .eq("user_id", userId);
+  const removedIds = removed.map((entry) => entry.transaction_id);
+  const { error } = await supabaseAdmin
+    .from("transactions")
+    .update({ is_removed: true })
+    .eq("user_id", userId)
+    .in("plaid_transaction_id", removedIds);
 
-  await Promise.all(
-    [...affectedDates].map((date) => refreshCarbonSummaries(userId, date))
+  if (error) {
+    throw new Error("Unable to mark removed transactions");
+  }
+}
+
+/**
+ * Upserts added and modified Plaid transactions, batching AI classification
+ * into a single Gemini call for any transactions that miss the local cache.
+ * @returns Resolves after every non-pending changed transaction is processed.
+ */
+async function upsertChangedTransactions(
+  userId: string,
+  connectionId: string,
+  syncData: Awaited<ReturnType<PlaidApi["transactionsSync"]>>["data"],
+  state: ReturnType<typeof createSyncState>
+): Promise<void> {
+  const changedTransactions = [...syncData.added, ...syncData.modified].filter(
+    (transaction) => !transaction.pending
   );
 
+  if (changedTransactions.length === 0) {
+    return;
+  }
+
+  const merchantNames = changedTransactions.map(getMerchantName);
+  const plaidCategories = changedTransactions.map(mapPlaidCategory);
+  const classifications = await classifyTransactionsBatch(
+    changedTransactions.map((transaction, index) => ({
+      merchantName: merchantNames[index],
+      plaidCategory: plaidCategories[index],
+      amount: transaction.amount
+    }))
+  );
+
+  await Promise.all(
+    changedTransactions.map((transaction, index) =>
+      saveSyncedTransaction(
+        userId,
+        connectionId,
+        transaction,
+        merchantNames[index],
+        plaidCategories[index],
+        classifications[index]
+      )
+    )
+  );
+
+  changedTransactions.forEach((transaction, index) => {
+    updateSyncCounters(transaction, syncData, classifications[index].carbon_kg, state);
+  });
+}
+
+/**
+ * Saves one classified Plaid transaction locally.
+ * @returns Resolves after upsert succeeds.
+ * @throws When the transaction cannot be saved.
+ */
+async function saveSyncedTransaction(
+  userId: string,
+  connectionId: string,
+  transaction: PlaidTransaction,
+  merchantName: string,
+  plaidCategory: string,
+  classification: Awaited<ReturnType<typeof classifyTransactionsBatch>>[number]
+): Promise<void> {
+  const { error } = await supabaseAdmin.from("transactions").upsert(
+    {
+      user_id: userId, bank_connection_id: connectionId,
+      plaid_transaction_id: transaction.transaction_id, merchant_name: merchantName,
+      merchant_category: plaidCategory, amount: transaction.amount,
+      currency: transaction.iso_currency_code ?? "USD", carbon_kg: classification.carbon_kg,
+      carbon_category: classification.carbon_category, carbon_confidence: classification.confidence,
+      carbon_source: classification.source, transaction_date: transaction.date, is_removed: false
+    },
+    { onConflict: "plaid_transaction_id" }
+  );
+
+  if (error) {
+    throw new Error("Unable to save synced transaction");
+  }
+}
+
+/**
+ * Updates sync counters and affected date set for one saved transaction.
+ * @returns Nothing; mutates sync state.
+ */
+function updateSyncCounters(
+  transaction: PlaidTransaction,
+  syncData: Awaited<ReturnType<PlaidApi["transactionsSync"]>>["data"],
+  carbonKg: number,
+  state: ReturnType<typeof createSyncState>
+): void {
+  if (syncData.added.some((added) => added.transaction_id === transaction.transaction_id)) {
+    state.newTransactions += 1;
+    state.totalCarbonKg += carbonKg;
+  }
+
+  state.affectedDates.add(transaction.date);
+}
+
+/**
+ * Persists the final Plaid cursor and sync metadata on the connection.
+ * @returns Resolves after the connection update completes.
+ */
+async function updateBankConnectionSyncState(
+  userId: string,
+  connectionId: string,
+  cursor: string | undefined
+): Promise<void> {
+  await supabaseAdmin
+    .from("bank_connections")
+    .update({ plaid_cursor: cursor, last_synced: new Date().toISOString(), status: "active" })
+    .eq("id", connectionId)
+    .eq("user_id", userId);
+}
+
+/**
+ * Refreshes carbon summaries for all affected transaction dates.
+ * @returns Resolves after all affected summaries are refreshed.
+ */
+async function refreshAffectedCarbonSummaries(userId: string, affectedDates: Set<string>): Promise<void> {
+  await Promise.all([...affectedDates].map((date) => refreshCarbonSummaries(userId, date)));
+}
+
+/**
+ * Shapes final sync counters into the public sync result.
+ * @returns New transaction count and rounded carbon total.
+ */
+function buildSyncResult(state: ReturnType<typeof createSyncState>): SyncResult {
   return {
-    new_transactions: newTransactions,
-    total_carbon_kg: Math.round(totalCarbonKg * 100) / 100
+    new_transactions: state.newTransactions,
+    total_carbon_kg: Math.round(state.totalCarbonKg * 100) / 100
   };
 }
 
@@ -336,19 +500,46 @@ export async function disconnectBank(
   userId: string,
   connectionId: string
 ): Promise<PublicConnection> {
+  return await disconnectBankWorkflow(userId, connectionId);
+}
+
+/**
+ * Executes the extracted disconnectBank service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `disconnectBank`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+async function disconnectBankWorkflow(
+  userId: string,
+  connectionId: string
+): Promise<PublicConnection> {
   const connection = await getOwnedConnection(userId, connectionId);
-  const accessToken = decryptAccessToken(connection.plaid_access_token);
+  await removePlaidItem(connection);
 
+  const disconnected = await markBankConnectionDisconnected(userId, connectionId);
+  await markConnectionTransactionsRemoved(userId, connectionId);
+
+  return sanitizeConnection(disconnected);
+}
+
+/**
+ * Removes the Plaid item for a bank connection.
+ * @returns Resolves after Plaid confirms item removal.
+ */
+async function removePlaidItem(connection: BankConnectionRecord): Promise<void> {
   await getPlaidClient().itemRemove({
-    access_token: accessToken
+    access_token: decryptAccessToken(connection.plaid_access_token)
   });
+}
 
+/**
+ * Marks a bank connection disconnected locally.
+ * @returns The updated bank connection record.
+ * @throws When the connection cannot be updated.
+ */
+async function markBankConnectionDisconnected(userId: string, connectionId: string): Promise<BankConnectionRecord> {
   const { data, error } = await supabaseAdmin
     .from("bank_connections")
-    .update({
-      status: "disconnected",
-      last_synced: new Date().toISOString()
-    })
+    .update({ status: "disconnected", last_synced: new Date().toISOString() })
     .eq("id", connectionId)
     .eq("user_id", userId)
     .select("*")
@@ -358,13 +549,19 @@ export async function disconnectBank(
     throw new Error("Unable to disconnect bank connection");
   }
 
+  return data;
+}
+
+/**
+ * Marks all transactions for a bank connection as removed.
+ * @returns Resolves after the transaction update completes.
+ */
+async function markConnectionTransactionsRemoved(userId: string, connectionId: string): Promise<void> {
   await supabaseAdmin
     .from("transactions")
     .update({ is_removed: true })
     .eq("user_id", userId)
     .eq("bank_connection_id", connectionId);
-
-  return sanitizeConnection(data);
 }
 
 /**
@@ -428,39 +625,77 @@ function getAffectedPeriods(date: string): Array<{
   periodStart: string;
   periodEnd: string;
 }> {
+  return getAffectedPeriodsWorkflow(date);
+}
+
+/**
+ * Executes the extracted getAffectedPeriods service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `getAffectedPeriods`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+function getAffectedPeriodsWorkflow(date: string): Array<{
+  periodType: "day" | "week" | "month";
+  periodStart: string;
+  periodEnd: string;
+}> {
   const parsedDate = new Date(`${date}T00:00:00.000Z`);
-  const dayEnd = new Date(parsedDate);
-  dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
-
-  const weekStart = new Date(parsedDate);
-  const daysSinceMonday = (weekStart.getUTCDay() + 6) % 7;
-  weekStart.setUTCDate(weekStart.getUTCDate() - daysSinceMonday);
-  const weekEnd = new Date(weekStart);
-  weekEnd.setUTCDate(weekEnd.getUTCDate() + 7);
-
-  const monthStart = new Date(
-    Date.UTC(parsedDate.getUTCFullYear(), parsedDate.getUTCMonth(), 1)
-  );
-  const monthEnd = new Date(monthStart);
-  monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1);
 
   return [
-    {
-      periodType: "day",
-      periodStart: formatDate(parsedDate),
-      periodEnd: formatDate(dayEnd)
-    },
-    {
-      periodType: "week",
-      periodStart: formatDate(weekStart),
-      periodEnd: formatDate(weekEnd)
-    },
-    {
-      periodType: "month",
-      periodStart: formatDate(monthStart),
-      periodEnd: formatDate(monthEnd)
-    }
+    buildAffectedPeriod("day", parsedDate, getDatePlusDays(parsedDate, 1)),
+    buildAffectedPeriod("week", getWeekStart(parsedDate), getDatePlusDays(getWeekStart(parsedDate), 7)),
+    buildAffectedPeriod("month", getMonthStart(parsedDate), getNextMonthStart(parsedDate))
   ];
+}
+
+/**
+ * Builds one affected period descriptor from start and end dates.
+ * @returns Period type and formatted boundaries.
+ */
+function buildAffectedPeriod(
+  periodType: "day" | "week" | "month",
+  periodStart: Date,
+  periodEnd: Date
+) {
+  return { periodType, periodStart: formatDate(periodStart), periodEnd: formatDate(periodEnd) };
+}
+
+/**
+ * Adds UTC days to a date copy.
+ * @returns A new date shifted by the requested day count.
+ */
+function getDatePlusDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+/**
+ * Gets the UTC Monday week start for a date.
+ * @returns Week start date.
+ */
+function getWeekStart(date: Date): Date {
+  const weekStart = new Date(date);
+  const daysSinceMonday = (weekStart.getUTCDay() + 6) % 7;
+  weekStart.setUTCDate(weekStart.getUTCDate() - daysSinceMonday);
+  return weekStart;
+}
+
+/**
+ * Gets the UTC month start for a date.
+ * @returns First day of the month.
+ */
+function getMonthStart(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+}
+
+/**
+ * Gets the UTC start of the next month for a date.
+ * @returns First day of the following month.
+ */
+function getNextMonthStart(date: Date): Date {
+  const monthEnd = getMonthStart(date);
+  monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1);
+  return monthEnd;
 }
 
 async function recalculateCarbonSummary(
@@ -469,6 +704,32 @@ async function recalculateCarbonSummary(
   periodStart: string,
   periodEnd: string
 ): Promise<void> {
+  return await recalculateCarbonSummaryWorkflow(userId, periodType, periodStart, periodEnd);
+}
+
+/**
+ * Executes the extracted recalculateCarbonSummary service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `recalculateCarbonSummary`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+async function recalculateCarbonSummaryWorkflow(
+  userId: string,
+  periodType: "day" | "week" | "month",
+  periodStart: string,
+  periodEnd: string
+): Promise<void> {
+  const transactions = await loadSummaryTransactions(userId, periodStart, periodEnd);
+  const summary = summarizeTransactions(transactions);
+
+  await upsertCarbonSummary(userId, periodType, periodStart, summary);
+}
+
+/**
+ * Loads transactions included in one carbon summary period.
+ * @returns Transaction rows for summary aggregation.
+ * @throws When transactions cannot be loaded.
+ */
+async function loadSummaryTransactions(userId: string, periodStart: string, periodEnd: string) {
   const { data: transactions, error } = await supabaseAdmin
     .from("transactions")
     .select("carbon_kg,carbon_category")
@@ -481,46 +742,75 @@ async function recalculateCarbonSummary(
     throw new Error("Unable to recalculate carbon summaries");
   }
 
-  const summary = transactions.reduce(
-    (current, transaction) => {
-      const carbonKg = Number(transaction.carbon_kg);
-      const categoryKey = `${transaction.carbon_category}_kg` as keyof typeof current;
+  return transactions;
+}
 
-      return {
-        ...current,
-        total_carbon_kg: current.total_carbon_kg + carbonKg,
-        [categoryKey]: current[categoryKey] + carbonKg
-      };
-    },
-    {
-      total_carbon_kg: 0,
-      food_kg: 0,
-      transport_kg: 0,
-      home_kg: 0,
-      shopping_kg: 0,
-      travel_kg: 0,
-      other_kg: 0
-    }
-  );
+/**
+ * Aggregates transactions into category and total carbon buckets.
+ * @returns Unrounded carbon summary totals.
+ */
+function summarizeTransactions(transactions: Awaited<ReturnType<typeof loadSummaryTransactions>>) {
+  return transactions.reduce(addTransactionToSummary, {
+    total_carbon_kg: 0, food_kg: 0, transport_kg: 0, home_kg: 0,
+    shopping_kg: 0, travel_kg: 0, other_kg: 0
+  });
+}
 
+/**
+ * Adds one transaction to a carbon summary accumulator.
+ * @returns Updated summary accumulator.
+ */
+function addTransactionToSummary(
+  current: ReturnType<typeof emptyCarbonSummary>,
+  transaction: Awaited<ReturnType<typeof loadSummaryTransactions>>[number]
+) {
+  const carbonKg = Number(transaction.carbon_kg);
+  const categoryKey = `${transaction.carbon_category}_kg` as keyof typeof current;
+
+  return { ...current, total_carbon_kg: current.total_carbon_kg + carbonKg, [categoryKey]: current[categoryKey] + carbonKg };
+}
+
+/**
+ * Provides the empty carbon summary shape for typing aggregation.
+ * @returns Empty carbon summary totals.
+ */
+function emptyCarbonSummary() {
+  return { total_carbon_kg: 0, food_kg: 0, transport_kg: 0, home_kg: 0, shopping_kg: 0, travel_kg: 0, other_kg: 0 };
+}
+
+/**
+ * Upserts the rounded carbon summary row for a period.
+ * @returns Resolves after the upsert completes.
+ */
+async function upsertCarbonSummary(
+  userId: string,
+  periodType: "day" | "week" | "month",
+  periodStart: string,
+  summary: ReturnType<typeof emptyCarbonSummary>
+): Promise<void> {
   await supabaseAdmin.from("carbon_summaries").upsert(
-    {
-      user_id: userId,
-      period_type: periodType,
-      period_start: periodStart,
-      total_carbon_kg: roundCurrency(summary.total_carbon_kg),
-      food_kg: roundCurrency(summary.food_kg),
-      transport_kg: roundCurrency(summary.transport_kg),
-      home_kg: roundCurrency(summary.home_kg),
-      shopping_kg: roundCurrency(summary.shopping_kg),
-      travel_kg: roundCurrency(summary.travel_kg),
-      other_kg: roundCurrency(summary.other_kg),
-      challenge_savings_kg: 0
-    },
-    {
-      onConflict: "user_id,period_type,period_start"
-    }
+    buildCarbonSummaryUpsert(userId, periodType, periodStart, summary),
+    { onConflict: "user_id,period_type,period_start" }
   );
+}
+
+/**
+ * Shapes a carbon summary upsert payload.
+ * @returns Database payload with rounded category values.
+ */
+function buildCarbonSummaryUpsert(
+  userId: string,
+  periodType: "day" | "week" | "month",
+  periodStart: string,
+  summary: ReturnType<typeof emptyCarbonSummary>
+) {
+  return {
+    user_id: userId, period_type: periodType, period_start: periodStart,
+    total_carbon_kg: roundCurrency(summary.total_carbon_kg), food_kg: roundCurrency(summary.food_kg),
+    transport_kg: roundCurrency(summary.transport_kg), home_kg: roundCurrency(summary.home_kg),
+    shopping_kg: roundCurrency(summary.shopping_kg), travel_kg: roundCurrency(summary.travel_kg),
+    other_kg: roundCurrency(summary.other_kg), challenge_savings_kg: 0
+  };
 }
 
 function formatDate(date: Date): string {

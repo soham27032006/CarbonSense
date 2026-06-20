@@ -12,7 +12,7 @@ import {
   type CategoryCarbonFactor,
   type MerchantCarbonFactor
 } from "../utils/carbonFactors";
-import { chatWithAI, classifyCarbon, extractJson } from "./ai.service";
+import { chatWithAI, classifyCarbon, classifyCarbonBatch, extractJson } from "./ai.service";
 
 export type TransportMode = "car" | "public_transit" | "bike" | "wfh" | "mixed";
 export type MeatFrequency = "daily" | "few_times_week" | "rarely" | "never";
@@ -395,6 +395,113 @@ export async function classifyTransaction(
   return classifyWithAI(merchantName, plaidCategory, amount);
 }
 
+type BatchInput = {
+  merchantName: string;
+  plaidCategory: string;
+  amount: number;
+};
+
+/**
+ * Classifies a batch of transactions, resolving local merchant/category lookups
+ * first and falling back to a single batched Gemini call for the remainder.
+ * @param inputs - The transactions needing classification.
+ * @returns One classification per input, in the same order.
+ * @throws When the batched AI call fails or returns malformed JSON.
+ */
+export async function classifyTransactionsBatch(
+  inputs: BatchInput[]
+): Promise<TransactionCarbonClassification[]> {
+  if (inputs.length === 0) {
+    return [];
+  }
+
+  const results: (TransactionCarbonClassification | null)[] = new Array(inputs.length).fill(null);
+  const aiIndices: number[] = [];
+  const aiInputs: Array<{ merchant: string; category: string; amount: number }> = [];
+
+  inputs.forEach((input, index) => {
+    const local = classifyTransactionLocally(input.merchantName, input.plaidCategory, input.amount);
+    if (local) {
+      results[index] = local;
+      return;
+    }
+    aiIndices.push(index);
+    aiInputs.push({
+      merchant: input.merchantName,
+      category: input.plaidCategory,
+      amount: input.amount
+    });
+  });
+
+  if (aiIndices.length === 0) {
+    return results as TransactionCarbonClassification[];
+  }
+
+  const aiResults = await classifyCarbonBatch(aiInputs);
+  aiIndices.forEach((resultIndex, aiOffset) => {
+    const parsed = aiResults[aiOffset];
+    if (!parsed) {
+      results[resultIndex] = buildUnclassifiedFallback(
+        inputs[resultIndex].amount,
+        inputs[resultIndex].plaidCategory
+      );
+      return;
+    }
+    const amount = inputs[resultIndex].amount;
+    results[resultIndex] = {
+      carbon_kg: roundKg(Math.abs(amount) * parsed.emission_factor_per_dollar),
+      carbon_category: parsed.carbon_category,
+      confidence: AI_MATCH_CONFIDENCE,
+      source: "ai",
+      factor_per_dollar: parsed.emission_factor_per_dollar,
+      reasoning: parsed.reasoning
+    };
+  });
+
+  return results as TransactionCarbonClassification[];
+}
+
+function classifyTransactionLocally(
+  merchantName: string,
+  plaidCategory: string,
+  amount: number
+): TransactionCarbonClassification | null {
+  const merchantFactor = findMerchantFactor(merchantName);
+  if (merchantFactor) {
+    return toClassification(
+      amount,
+      merchantFactor,
+      MERCHANT_MATCH_CONFIDENCE,
+      "emission_factor"
+    );
+  }
+
+  const categoryFactor = findCategoryFactor(plaidCategory);
+  if (categoryFactor) {
+    return toClassification(
+      amount,
+      categoryFactor,
+      CATEGORY_MATCH_CONFIDENCE,
+      "emission_factor"
+    );
+  }
+
+  return null;
+}
+
+function buildUnclassifiedFallback(amount: number, category: string): TransactionCarbonClassification {
+  const categoryFactor = findCategoryFactor(category) ?? {
+    category: "other" as CarbonCategory,
+    factor_per_dollar: 0
+  };
+  return toClassification(
+    amount,
+    categoryFactor,
+    CATEGORY_MATCH_CONFIDENCE,
+    "emission_factor"
+  );
+}
+
 /**
  * Runs the classifyWithAI service workflow for CarbonSense domain data.
  * @returns Returns the service result consumed by controllers.
@@ -426,118 +533,184 @@ export async function classifyWithAI(
  * @throws Throws service, persistence, or upstream API errors for the caller to handle.
  */
 export async function getDashboard(userId: string) {
-  const today = todayIndia();
-  const week = getDateRangeBounds(today, 6);
-  const previousWeek = getDateRangeBounds(daysAgoIndia(7), 6);
-  const month = getMonthRangeBounds(today);
-  const previousMonth = getMonthRangeBounds(offsetPeriod(month.start, "month", -1).periodStart);
-  const yearStart = `${today.slice(0, 4)}-01-01`;
-  const yearEnd = `${today.slice(0, 4)}-12-31`;
+  return await getDashboardWorkflow(userId);
+}
 
-  const [
-    { data: user, error: userError },
-    todayCarbon,
-    thisWeek,
-    previousWeekCarbon,
-    thisMonth,
-    previousMonthCarbon,
-    thisYear,
-    aiInsight,
-    challengeStatus,
-    hasLiveData
-  ] =
+/**
+ * Executes the extracted getDashboard service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `getDashboard`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+async function getDashboardWorkflow(userId: string) {
+  const ranges = getDashboardRanges();
+  const data = await loadDashboardData(userId, ranges);
+  const user = getDashboardUser(data);
+  const ageMetrics = getDashboardAgeMetrics(user, data.thisMonth, data.todayCarbon);
+
+  return buildDashboardResponse(ranges.today, user, data, ageMetrics);
+}
+
+/**
+ * Builds date ranges used by the dashboard cards.
+ * @returns Today, week, previous week, month, previous month, and year bounds.
+ */
+function getDashboardRanges() {
+  const today = todayIndia();
+  const month = getMonthRangeBounds(today);
+
+  return {
+    today, week: getDateRangeBounds(today, 6), previousWeek: getDateRangeBounds(daysAgoIndia(7), 6),
+    month, previousMonth: getMonthRangeBounds(offsetPeriod(month.start, "month", -1).periodStart),
+    yearStart: `${today.slice(0, 4)}-01-01`, yearEnd: `${today.slice(0, 4)}-12-31`
+  };
+}
+
+/**
+ * Loads all dashboard data in the same parallel batch as the original workflow.
+ * @returns Dashboard profile, carbon windows, insight, challenge status, and data flag.
+ */
+async function loadDashboardData(userId: string, ranges: ReturnType<typeof getDashboardRanges>) {
+  const [userResult, todayCarbon, thisWeek, previousWeekCarbon, thisMonth, previousMonthCarbon, thisYear, aiInsight, challengeStatus, hasLiveData] =
     await Promise.all([
-      supabaseAdmin
-        .from("users")
-        .select("carbon_age,level,level_name,xp,streak_count,streak_max,streak_freeze_available,onboarding_data")
-        .eq("id", userId)
-        .single(),
-      getChallengeCarbonSnapshot(userId, today, today),
-      getChallengeCarbonSnapshot(userId, week.start, week.end),
-      getChallengeCarbonSnapshot(userId, previousWeek.start, previousWeek.end),
-      getChallengeCarbonSnapshot(userId, month.start, month.end),
-      getChallengeCarbonSnapshot(userId, previousMonth.start, previousMonth.end),
-      getChallengeCarbonSnapshot(userId, yearStart, yearEnd),
-      generateDailyInsightForDashboard(userId),
-      getTodayChallengeStatus(userId, today),
-      hasAnyLiveCarbonData(userId)
+      supabaseAdmin.from("users").select("carbon_age,level,level_name,xp,streak_count,streak_max,streak_freeze_available,onboarding_data").eq("id", userId).single(),
+      getChallengeCarbonSnapshot(userId, ranges.today, ranges.today),
+      getChallengeCarbonSnapshot(userId, ranges.week.start, ranges.week.end),
+      getChallengeCarbonSnapshot(userId, ranges.previousWeek.start, ranges.previousWeek.end),
+      getChallengeCarbonSnapshot(userId, ranges.month.start, ranges.month.end),
+      getChallengeCarbonSnapshot(userId, ranges.previousMonth.start, ranges.previousMonth.end),
+      getChallengeCarbonSnapshot(userId, ranges.yearStart, ranges.yearEnd),
+      generateDailyInsightForDashboard(userId), getTodayChallengeStatus(userId, ranges.today), hasAnyLiveCarbonData(userId)
     ]);
 
-  if (userError || !user) {
+  return { userResult, todayCarbon, thisWeek, previousWeekCarbon, thisMonth, previousMonthCarbon, thisYear, aiInsight, challengeStatus, hasLiveData };
+}
+
+/**
+ * Extracts the dashboard user or raises the original profile error.
+ * @returns Dashboard user profile row.
+ * @throws When the dashboard profile cannot be loaded.
+ */
+function getDashboardUser(data: Awaited<ReturnType<typeof loadDashboardData>>) {
+  if (data.userResult.error || !data.userResult.data) {
     throw new Error("Unable to load dashboard profile");
   }
 
+  return data.userResult.data;
+}
+
+/**
+ * Calculates carbon age, biological age, target age, and target tons.
+ * @returns Dashboard age metrics.
+ */
+function getDashboardAgeMetrics(
+  user: ReturnType<typeof getDashboardUser>,
+  thisMonth: ChallengeCarbonSnapshot,
+  todayCarbon: ChallengeCarbonSnapshot
+) {
   const onboarding = (user.onboarding_data ?? {}) as Record<string, unknown>;
-  const biologicalAge = Number(
-    (onboarding.biological_age as number | undefined) ?? DEFAULT_BIOLOGICAL_AGE
-  );
+  const biologicalAge = Number((onboarding.biological_age as number | undefined) ?? DEFAULT_BIOLOGICAL_AGE);
   const userCountry = String((onboarding.country as string | undefined) ?? "India");
-  const targetTons = getCountryTargetTons(userCountry);
-
-  const monthlyTotalKg = thisMonth.total_carbon_kg || todayCarbon.total_carbon_kg;
-  const estimatedAnnualTonsFromMonthly = (monthlyTotalKg * 12) / 1000;
-  const estimatedAnnualTons = monthlyTotalKg > 0
-    ? estimatedAnnualTonsFromMonthly
-    : Number(
-        (onboarding.estimated_annual_tons as number | undefined) ??
-          (onboarding.annual_carbon_tons as number | undefined) ??
-          0
-      );
-  const carbonAge = Number.isFinite(user.carbon_age) && user.carbon_age > 0
-    ? Number(user.carbon_age)
-    : calculateCarbonAge(biologicalAge, estimatedAnnualTons, userCountry);
-
-  const realAge = biologicalAge;
-  const targetAge = Math.max(20, biologicalAge - 5);
+  const estimatedAnnualTons = getEstimatedAnnualTons(onboarding, thisMonth, todayCarbon);
 
   return {
-    carbon_age: carbonAge,
-    real_age: realAge,
-    target_age: targetAge,
-    target_tons: targetTons,
-    current_level: {
-      level: user.level,
-      name: user.level_name,
-      xp: user.xp,
-      xp_to_next: getXpToNextLevel(user.xp)
-    },
-    streak: {
-      current: user.streak_count,
-      max: user.streak_max,
-      freeze_available: user.streak_freeze_available
-    },
-    today: {
-      carbon_kg: todayCarbon.total_carbon_kg,
-      challenge_status: challengeStatus
-    },
-    this_week: {
-      total_carbon_kg: thisWeek.total_carbon_kg,
-      vs_last_week_percent: percentChange(
-        thisWeek.total_carbon_kg,
-        previousWeekCarbon.total_carbon_kg
-      ),
-      category_breakdown: thisWeek.category_breakdown,
-      is_estimated: !hasLiveData
-    },
-    this_month: {
-      total_carbon_kg: thisMonth.total_carbon_kg,
-      vs_last_month_percent: percentChange(
-        thisMonth.total_carbon_kg,
-        previousMonthCarbon.total_carbon_kg
-      ),
-      daily_average_kg: roundKg(
-        thisMonth.total_carbon_kg / Math.max(Number(today.slice(8, 10)), 1)
-      ),
-      category_breakdown: thisMonth.category_breakdown,
-      is_estimated: !hasLiveData
-    },
-    this_year: {
-      total_carbon_kg: thisYear.total_carbon_kg,
-      category_breakdown: thisYear.category_breakdown,
-      is_estimated: !hasLiveData
-    },
-    ai_insight: aiInsight
+    carbonAge: Number.isFinite(user.carbon_age) && user.carbon_age > 0
+      ? Number(user.carbon_age)
+      : calculateCarbonAge(biologicalAge, estimatedAnnualTons, userCountry),
+    realAge: biologicalAge, targetAge: Math.max(20, biologicalAge - 5),
+    targetTons: getCountryTargetTons(userCountry)
   };
+}
+
+/**
+ * Resolves estimated annual tons from monthly/today totals or onboarding fallback.
+ * @returns Estimated annual tons.
+ */
+function getEstimatedAnnualTons(
+  onboarding: Record<string, unknown>,
+  thisMonth: ChallengeCarbonSnapshot,
+  todayCarbon: ChallengeCarbonSnapshot
+): number {
+  const monthlyTotalKg = thisMonth.total_carbon_kg || todayCarbon.total_carbon_kg;
+
+  return monthlyTotalKg > 0
+    ? (monthlyTotalKg * 12) / 1000
+    : Number((onboarding.estimated_annual_tons as number | undefined) ?? (onboarding.annual_carbon_tons as number | undefined) ?? 0);
+}
+
+/**
+ * Shapes dashboard data into the existing response contract.
+ * @returns Dashboard payload.
+ */
+function buildDashboardResponse(
+  today: string,
+  user: ReturnType<typeof getDashboardUser>,
+  data: Awaited<ReturnType<typeof loadDashboardData>>,
+  ageMetrics: ReturnType<typeof getDashboardAgeMetrics>
+) {
+  return {
+    carbon_age: ageMetrics.carbonAge, real_age: ageMetrics.realAge, target_age: ageMetrics.targetAge,
+    target_tons: ageMetrics.targetTons, current_level: buildDashboardLevel(user),
+    streak: buildDashboardStreak(user), today: buildDashboardToday(data),
+    this_week: buildDashboardWeek(data), this_month: buildDashboardMonth(today, data),
+    this_year: buildDashboardYear(data), ai_insight: data.aiInsight
+  };
+}
+
+/**
+ * Builds dashboard level details.
+ * @returns Level, name, XP, and XP-to-next values.
+ */
+function buildDashboardLevel(user: ReturnType<typeof getDashboardUser>) {
+  return { level: user.level, name: user.level_name, xp: user.xp, xp_to_next: getXpToNextLevel(user.xp) };
+}
+
+/**
+ * Builds dashboard streak details.
+ * @returns Current streak, max streak, and freeze availability.
+ */
+function buildDashboardStreak(user: ReturnType<typeof getDashboardUser>) {
+  return { current: user.streak_count, max: user.streak_max, freeze_available: user.streak_freeze_available };
+}
+
+/**
+ * Builds today's dashboard summary.
+ * @returns Today's carbon and challenge status.
+ */
+function buildDashboardToday(data: Awaited<ReturnType<typeof loadDashboardData>>) {
+  return { carbon_kg: data.todayCarbon.total_carbon_kg, challenge_status: data.challengeStatus };
+}
+
+/**
+ * Builds this week's dashboard summary.
+ * @returns Weekly total, comparison, breakdown, and estimate flag.
+ */
+function buildDashboardWeek(data: Awaited<ReturnType<typeof loadDashboardData>>) {
+  return {
+    total_carbon_kg: data.thisWeek.total_carbon_kg,
+    vs_last_week_percent: percentChange(data.thisWeek.total_carbon_kg, data.previousWeekCarbon.total_carbon_kg),
+    category_breakdown: data.thisWeek.category_breakdown, is_estimated: !data.hasLiveData
+  };
+}
+
+/**
+ * Builds this month's dashboard summary.
+ * @returns Monthly total, comparison, daily average, breakdown, and estimate flag.
+ */
+function buildDashboardMonth(today: string, data: Awaited<ReturnType<typeof loadDashboardData>>) {
+  return {
+    total_carbon_kg: data.thisMonth.total_carbon_kg,
+    vs_last_month_percent: percentChange(data.thisMonth.total_carbon_kg, data.previousMonthCarbon.total_carbon_kg),
+    daily_average_kg: roundKg(data.thisMonth.total_carbon_kg / Math.max(Number(today.slice(8, 10)), 1)),
+    category_breakdown: data.thisMonth.category_breakdown, is_estimated: !data.hasLiveData
+  };
+}
+
+/**
+ * Builds this year's dashboard summary.
+ * @returns Yearly total, breakdown, and estimate flag.
+ */
+function buildDashboardYear(data: Awaited<ReturnType<typeof loadDashboardData>>) {
+  return { total_carbon_kg: data.thisYear.total_carbon_kg, category_breakdown: data.thisYear.category_breakdown, is_estimated: !data.hasLiveData };
 }
 
 /**
@@ -549,36 +722,64 @@ export async function getTransactions(
   userId: string,
   filters: TransactionFilters
 ) {
+  return await getTransactionsWorkflow(userId, filters);
+}
+
+/**
+ * Executes the extracted getTransactions service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `getTransactions`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+async function getTransactionsWorkflow(
+  userId: string,
+  filters: TransactionFilters
+) {
+  const pagination = getTransactionPagination(filters);
+  const transactionRows = await loadTransactionRows(userId, filters, pagination);
+  const totalCarbonKg = await loadTransactionCarbonTotal(userId, filters);
+
+  return buildTransactionsResponse(transactionRows, pagination, totalCarbonKg);
+}
+
+/**
+ * Normalizes transaction pagination inputs.
+ * @returns Safe pagination values and range bounds.
+ */
+function getTransactionPagination(filters: TransactionFilters) {
   const page = Math.max(filters.page, 1);
   const limit = Math.min(Math.max(filters.limit, 1), 100);
-  const from = (page - 1) * limit;
-  const to = from + limit - 1;
+  return { page, limit, from: (page - 1) * limit, to: page * limit - 1 };
+}
 
+/**
+ * Loads filtered transaction rows for one page.
+ * @returns Transaction rows and exact count.
+ * @throws When transaction rows cannot be loaded.
+ */
+async function loadTransactionRows(userId: string, filters: TransactionFilters, pagination: ReturnType<typeof getTransactionPagination>) {
   let query = supabaseAdmin
     .from("transactions")
-    .select(
-      "id,merchant_name,amount,currency,carbon_kg,carbon_category,carbon_confidence,transaction_date",
-      { count: "exact" }
-    )
+    .select("id,merchant_name,amount,currency,carbon_kg,carbon_category,carbon_confidence,transaction_date", { count: "exact" })
     .eq("user_id", userId)
     .eq("is_removed", false);
 
   query = applyTransactionFilters(query, filters);
-
-  const { data, error, count } = await query
-    .order("transaction_date", { ascending: false })
-    .range(from, to);
+  const { data, error, count } = await query.order("transaction_date", { ascending: false }).range(pagination.from, pagination.to);
 
   if (error) {
     throw new Error("Unable to load transactions");
   }
 
-  let summaryQuery = supabaseAdmin
-    .from("transactions")
-    .select("carbon_kg")
-    .eq("user_id", userId)
-    .eq("is_removed", false);
+  return { data, count };
+}
 
+/**
+ * Loads the filtered transaction carbon total.
+ * @returns Rounded total carbon for filtered transactions.
+ * @throws When transaction summary cannot be loaded.
+ */
+async function loadTransactionCarbonTotal(userId: string, filters: TransactionFilters): Promise<number> {
+  let summaryQuery = supabaseAdmin.from("transactions").select("carbon_kg").eq("user_id", userId).eq("is_removed", false);
   summaryQuery = applyTransactionFilters(summaryQuery, filters);
   const { data: summaryRows, error: summaryError } = await summaryQuery;
 
@@ -586,36 +787,37 @@ export async function getTransactions(
     throw new Error("Unable to load transaction summary");
   }
 
-  const totalCarbonKg = roundKg(
-    (summaryRows ?? []).reduce((total, row) => total + Number(row.carbon_kg), 0)
-  );
-  const total = count ?? 0;
+  return roundKg((summaryRows ?? []).reduce((total, row) => total + Number(row.carbon_kg), 0));
+}
 
+/**
+ * Shapes transaction rows, pagination, and summary into the response.
+ * @returns Paginated transaction response.
+ */
+function buildTransactionsResponse(
+  transactionRows: Awaited<ReturnType<typeof loadTransactionRows>>,
+  pagination: ReturnType<typeof getTransactionPagination>,
+  totalCarbonKg: number
+) {
+  const total = transactionRows.count ?? 0;
   return {
-    transactions: (data ?? []).map((transaction) => ({
-      id: transaction.id,
-      merchant: transaction.merchant_name,
-      merchant_name: transaction.merchant_name,
-      category: transaction.carbon_category,
-      carbon_category: transaction.carbon_category,
-      amount: Number(transaction.amount),
-      currency: (transaction as { currency?: string }).currency ?? "₹",
-      carbon_kg: Number(transaction.carbon_kg),
-      confidence: Number(transaction.carbon_confidence),
-      occurred_at: transaction.transaction_date,
-      date: transaction.transaction_date,
-      icon: getCategoryIcon(transaction.carbon_category)
-    })),
-    pagination: {
-      page,
-      limit,
-      total,
-      total_pages: Math.ceil(total / limit)
-    },
-    summary: {
-      total_carbon_kg: totalCarbonKg,
-      avg_per_transaction: total > 0 ? roundKg(totalCarbonKg / total) : 0
-    }
+    transactions: (transactionRows.data ?? []).map(buildTransactionItem),
+    pagination: { page: pagination.page, limit: pagination.limit, total, total_pages: Math.ceil(total / pagination.limit) },
+    summary: { total_carbon_kg: totalCarbonKg, avg_per_transaction: total > 0 ? roundKg(totalCarbonKg / total) : 0 }
+  };
+}
+
+/**
+ * Shapes one transaction row into the API item contract.
+ * @returns Transaction list item.
+ */
+function buildTransactionItem(transaction: NonNullable<Awaited<ReturnType<typeof loadTransactionRows>>["data"]>[number]) {
+  return {
+    id: transaction.id, merchant: transaction.merchant_name, merchant_name: transaction.merchant_name,
+    category: transaction.carbon_category, carbon_category: transaction.carbon_category, amount: Number(transaction.amount),
+    currency: (transaction as { currency?: string }).currency ?? "₹", carbon_kg: Number(transaction.carbon_kg),
+    confidence: Number(transaction.carbon_confidence), occurred_at: transaction.transaction_date,
+    date: transaction.transaction_date, icon: getCategoryIcon(transaction.carbon_category)
   };
 }
 
@@ -629,58 +831,105 @@ export async function getTrends(
   period: "weekly" | "monthly",
   range: number
 ) {
-  const periodType: PeriodType = period === "weekly" ? "week" : "month";
+  return await getTrendsWorkflow(userId, period, range);
+}
+
+/**
+ * Executes the extracted getTrends service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `getTrends`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+async function getTrendsWorkflow(
+  userId: string,
+  period: "weekly" | "monthly",
+  range: number
+) {
+  const periodType: "week" | "month" = period === "weekly" ? "week" : "month";
+  const trendData = await loadTrendData(userId, periodType, range);
+  const estimate = getTrendEstimate(trendData);
+  const points = buildTrendPoints(trendData.rows, periodType, range, estimate);
+
+  return buildTrendsResponse(points, periodType, range, estimate);
+}
+
+/**
+ * Loads trend summaries and onboarding fallback data.
+ * @returns Trend summary rows and onboarding user row.
+ * @throws When trend data cannot be loaded.
+ */
+async function loadTrendData(userId: string, periodType: PeriodType, range: number) {
   const [{ data, error }, { data: user, error: userError }] = await Promise.all([
-    supabaseAdmin
-      .from("carbon_summaries")
-      .select("*")
-      .eq("user_id", userId)
-      .eq("period_type", periodType)
-      .order("period_start", { ascending: false })
-      .limit(range),
-    supabaseAdmin
-      .from("users")
-      .select("onboarding_data")
-      .eq("id", userId)
-      .maybeSingle()
+    supabaseAdmin.from("carbon_summaries").select("*").eq("user_id", userId).eq("period_type", periodType).order("period_start", { ascending: false }).limit(range),
+    supabaseAdmin.from("users").select("onboarding_data").eq("id", userId).maybeSingle()
   ]);
 
   if (error || userError) {
     throw new Error("Unable to load carbon trends");
   }
 
-  const rows = data ?? [];
-  const estimate = rows.length === 0 ? estimateWeeklyFromOnboarding(user?.onboarding_data) : null;
+  return { rows: data ?? [], user };
+}
 
-  const points = estimate
+/**
+ * Builds onboarding trend estimate when no live rows exist.
+ * @returns Weekly estimate or null.
+ */
+function getTrendEstimate(trendData: Awaited<ReturnType<typeof loadTrendData>>): WeeklyCarbonEstimate | null {
+  return trendData.rows.length === 0 ? estimateWeeklyFromOnboarding(trendData.user?.onboarding_data) : null;
+}
+
+/**
+ * Builds live or estimated trend points.
+ * @returns Trend points for the requested range.
+ */
+function buildTrendPoints(
+  rows: Awaited<ReturnType<typeof loadTrendData>>["rows"],
+  periodType: "week" | "month",
+  range: number,
+  estimate: WeeklyCarbonEstimate | null
+) {
+  return estimate
     ? buildEstimatedTrendPoints(periodType, range, estimate)
-    : [...rows]
-        .reverse()
-        .map((summary, idx, all) => buildLiveTrendPoint(summary, all, idx, periodType));
+    : [...rows].reverse().map((summary, idx, all) => buildLiveTrendPoint(summary, all, idx, periodType));
+}
 
-  const total = points.reduce((sum, p) => sum + p.value, 0);
-  const average = points.length > 0 ? roundKg(total / points.length) : 0;
-  const first = points[0]?.value ?? 0;
-  const last = points[points.length - 1]?.value ?? 0;
-
+/**
+ * Shapes trend points into the API response.
+ * @returns Trend response payload.
+ */
+function buildTrendsResponse(
+  points: ReturnType<typeof buildTrendPoints>,
+  periodType: "week" | "month",
+  range: number,
+  estimate: WeeklyCarbonEstimate | null
+) {
+  const stats = getTrendStats(points);
   return {
-    points,
-    period: periodType,
-    range,
-    unit: "kg",
-    total: roundKg(total),
-    average,
-    change_percent: percentChange(last, first),
-    is_estimated: !!estimate,
-    best_period: getExtremePeriod(
-      points.map((p) => ({ period_start: p.label, total_kg: p.value })),
-      "best"
-    ),
-    worst_period: getExtremePeriod(
-      points.map((p) => ({ period_start: p.label, total_kg: p.value })),
-      "worst"
-    )
+    points, period: periodType, range, unit: "kg", total: roundKg(stats.total),
+    average: stats.average, change_percent: percentChange(stats.last, stats.first),
+    is_estimated: !!estimate, best_period: getTrendExtreme(points, "best"),
+    worst_period: getTrendExtreme(points, "worst")
   };
+}
+
+/**
+ * Calculates aggregate trend stats.
+ * @returns Total, average, first, and last values.
+ */
+function getTrendStats(points: ReturnType<typeof buildTrendPoints>) {
+  const total = points.reduce((sum, point) => sum + point.value, 0);
+  return {
+    total, average: points.length > 0 ? roundKg(total / points.length) : 0,
+    first: points[0]?.value ?? 0, last: points[points.length - 1]?.value ?? 0
+  };
+}
+
+/**
+ * Finds the best or worst trend period.
+ * @returns Extreme period response.
+ */
+function getTrendExtreme(points: ReturnType<typeof buildTrendPoints>, type: "best" | "worst") {
+  return getExtremePeriod(points.map((point) => ({ period_start: point.label, total_kg: point.value })), type);
 }
 
 function buildLiveTrendPoint(
@@ -763,63 +1012,121 @@ export async function getCategoryDetail(
   userId: string,
   category: CarbonCategory
 ) {
-  const today = todayIndia();
-  const month = getPeriodBounds(today, "month");
-  const thisMonth = await getSummary(userId, "month", month.periodStart);
-  const thisMonthCategoryKg = Number(thisMonth[`${category}_kg`]);
-  const percentOfTotal =
-    thisMonth.total_carbon_kg > 0
-      ? Math.round((thisMonthCategoryKg / thisMonth.total_carbon_kg) * 100)
-      : 0;
+  return await getCategoryDetailWorkflow(userId, category);
+}
 
+/**
+ * Executes the extracted getCategoryDetail service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `getCategoryDetail`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+async function getCategoryDetailWorkflow(
+  userId: string,
+  category: CarbonCategory
+) {
+  const month = getPeriodBounds(todayIndia(), "month");
+  const thisMonth = await getSummary(userId, "month", month.periodStart);
+  const categoryStats = getCategoryMonthStats(thisMonth, category);
+  const topMerchants = await loadTopCategoryMerchants(userId, category, month);
+  const [trend, suggestions] = await Promise.all([
+    getCategoryWeeklyTrend(userId, category),
+    generateCategorySuggestions(category, topMerchants)
+  ]);
+
+  return buildCategoryDetailResponse(category, categoryStats, topMerchants, trend, suggestions);
+}
+
+/**
+ * Calculates this-month category total and percent of total.
+ * @returns Category monthly stats.
+ */
+function getCategoryMonthStats(thisMonth: Awaited<ReturnType<typeof getSummary>>, category: CarbonCategory) {
+  const thisMonthCategoryKg = Number(thisMonth[`${category}_kg`]);
+  const percentOfTotal = thisMonth.total_carbon_kg > 0
+    ? Math.round((thisMonthCategoryKg / thisMonth.total_carbon_kg) * 100)
+    : 0;
+
+  return { thisMonthCategoryKg, percentOfTotal };
+}
+
+/**
+ * Loads and ranks top category merchants for the month.
+ * @returns Top five merchants by category carbon total.
+ * @throws When category transactions cannot be loaded.
+ */
+async function loadTopCategoryMerchants(
+  userId: string,
+  category: CarbonCategory,
+  month: ReturnType<typeof getPeriodBounds>
+) {
+  const transactions = await loadCategoryTransactions(userId, category, month);
+  return buildTopMerchants(transactions);
+}
+
+/**
+ * Loads category transactions inside the month bounds.
+ * @returns Category transaction rows.
+ * @throws When category transactions cannot be loaded.
+ */
+async function loadCategoryTransactions(userId: string, category: CarbonCategory, month: ReturnType<typeof getPeriodBounds>) {
   const { data: transactions, error } = await supabaseAdmin
     .from("transactions")
     .select("merchant_name,carbon_kg,transaction_date")
-    .eq("user_id", userId)
-    .eq("is_removed", false)
-    .eq("carbon_category", category)
-    .gte("transaction_date", month.periodStart)
-    .lt("transaction_date", month.periodEnd);
+    .eq("user_id", userId).eq("is_removed", false).eq("carbon_category", category)
+    .gte("transaction_date", month.periodStart).lt("transaction_date", month.periodEnd);
 
   if (error) {
     throw new Error("Unable to load category transactions");
   }
 
-  const topMerchants = Object.values(
-    (transactions ?? []).reduce<Record<string, { name: string; total_kg: number; transaction_count: number }>>(
-      (current, transaction) => {
-        const existing = current[transaction.merchant_name] ?? {
-          name: transaction.merchant_name,
-          total_kg: 0,
-          transaction_count: 0
-        };
+  return transactions ?? [];
+}
 
-        return {
-          ...current,
-          [transaction.merchant_name]: {
-            ...existing,
-            total_kg: existing.total_kg + Number(transaction.carbon_kg),
-            transaction_count: existing.transaction_count + 1
-          }
-        };
-      },
+/**
+ * Aggregates category transactions into ranked merchant rows.
+ * @returns Top five merchants by rounded carbon total.
+ */
+function buildTopMerchants(transactions: Awaited<ReturnType<typeof loadCategoryTransactions>>) {
+  return Object.values(
+    transactions.reduce<Record<string, { name: string; total_kg: number; transaction_count: number }>>(
+      addMerchantTotal,
       {}
     )
   )
     .map((merchant) => ({ ...merchant, total_kg: roundKg(merchant.total_kg) }))
     .sort((left, right) => right.total_kg - left.total_kg)
     .slice(0, 5);
+}
 
-  const trend = await getCategoryWeeklyTrend(userId, category);
-  const suggestions = await generateCategorySuggestions(category, topMerchants);
-
+/**
+ * Adds one transaction to a merchant total map.
+ * @returns Updated merchant totals.
+ */
+function addMerchantTotal(
+  current: Record<string, { name: string; total_kg: number; transaction_count: number }>,
+  transaction: Awaited<ReturnType<typeof loadCategoryTransactions>>[number]
+) {
+  const existing = current[transaction.merchant_name] ?? { name: transaction.merchant_name, total_kg: 0, transaction_count: 0 };
   return {
-    category,
-    this_month_kg: roundKg(thisMonthCategoryKg),
-    percent_of_total: percentOfTotal,
-    top_merchants: topMerchants,
-    trend,
-    suggestions
+    ...current,
+    [transaction.merchant_name]: { ...existing, total_kg: existing.total_kg + Number(transaction.carbon_kg), transaction_count: existing.transaction_count + 1 }
+  };
+}
+
+/**
+ * Shapes category detail data into the API response.
+ * @returns Category detail response.
+ */
+function buildCategoryDetailResponse(
+  category: CarbonCategory,
+  stats: ReturnType<typeof getCategoryMonthStats>,
+  topMerchants: ReturnType<typeof buildTopMerchants>,
+  trend: Awaited<ReturnType<typeof getCategoryWeeklyTrend>>,
+  suggestions: string[]
+) {
+  return {
+    category, this_month_kg: roundKg(stats.thisMonthCategoryKg),
+    percent_of_total: stats.percentOfTotal, top_merchants: topMerchants, trend, suggestions
   };
 }
 
@@ -830,56 +1137,94 @@ export async function getCategoryDetail(
  * @throws Throws service, persistence, or upstream API errors for the caller to handle.
  */
 export async function getComparison(userId: string) {
-  const today = todayIndia();
-  const thisMonth = getPeriodBounds(today, "month");
+  return await getComparisonWorkflow(userId);
+}
+
+/**
+ * Executes the extracted getComparison service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `getComparison`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+async function getComparisonWorkflow(userId: string) {
+  const comparisonData = await loadComparisonData(userId);
+  const userMonthlyKg = getComparisonMonthlyKg(comparisonData);
+  const countryName = getComparisonCountry(comparisonData.user?.onboarding_data);
+  const nationalAvgKg = COUNTRY_AVG_KG[countryName] ?? COUNTRY_AVG_KG.default;
+  const vsLast = percentChange(userMonthlyKg, comparisonData.previousSummary.total_carbon_kg);
+  const topPercent = getComparisonTopPercent(userMonthlyKg, nationalAvgKg);
+
+  return buildComparisonResponse(userMonthlyKg, nationalAvgKg, vsLast, topPercent, countryName);
+}
+
+/**
+ * Loads current/previous summaries and onboarding data for comparison.
+ * @returns Data needed to build comparison response.
+ * @throws When comparison profile cannot be loaded.
+ */
+async function loadComparisonData(userId: string) {
+  const thisMonth = getPeriodBounds(todayIndia(), "month");
   const lastMonth = offsetPeriod(thisMonth.periodStart, "month", -1);
   const [currentSummary, previousSummary, { data: user, error: userError }] = await Promise.all([
     getSummary(userId, "month", thisMonth.periodStart),
     getSummary(userId, "month", lastMonth.periodStart),
-    supabaseAdmin
-      .from("users")
-      .select("onboarding_data")
-      .eq("id", userId)
-      .maybeSingle()
+    supabaseAdmin.from("users").select("onboarding_data").eq("id", userId).maybeSingle()
   ]);
+
   if (userError) {
     throw new Error("Unable to load comparison profile");
   }
 
-  const estimate = isZeroSummary(currentSummary)
-    ? estimateWeeklyFromOnboarding(user?.onboarding_data)
+  return { currentSummary, previousSummary, user };
+}
+
+/**
+ * Resolves live or estimated monthly kilograms for comparison.
+ * @returns Monthly carbon in kilograms.
+ */
+function getComparisonMonthlyKg(data: Awaited<ReturnType<typeof loadComparisonData>>): number {
+  const estimate = isZeroSummary(data.currentSummary)
+    ? estimateWeeklyFromOnboarding(data.user?.onboarding_data)
     : null;
-  const userMonthlyKg = estimate
-    ? roundKg(estimate.weekly_total * 4.33)
-    : currentSummary.total_carbon_kg;
 
-  const onboarding = (user?.onboarding_data ?? {}) as Record<string, unknown>;
+  return estimate ? roundKg(estimate.weekly_total * 4.33) : data.currentSummary.total_carbon_kg;
+}
+
+/**
+ * Extracts and normalizes comparison country from onboarding/settings.
+ * @returns Display country name.
+ */
+function getComparisonCountry(onboardingData: Json | undefined): string {
+  const onboarding = (onboardingData ?? {}) as Record<string, unknown>;
   const settings = (onboarding.settings ?? {}) as Record<string, unknown>;
+  const rawCountry = String((settings.country as string | undefined) ?? (onboarding.country as string | undefined) ?? "India").trim();
 
-  const rawCountry = String(
-    (settings.country as string | undefined) ??
-      (onboarding.country as string | undefined) ??
-      "India"
-  ).trim();
-  const countryName = capitalizeCountryName(rawCountry);
+  return capitalizeCountryName(rawCountry);
+}
 
-  const nationalAvgKg = COUNTRY_AVG_KG[countryName] ?? COUNTRY_AVG_KG.default;
-  const parisTargetKg = PARIS_TARGET_KG;
+/**
+ * Calculates bounded comparison percentile.
+ * @returns Top percentile between 1 and 99.
+ */
+function getComparisonTopPercent(userMonthlyKg: number, nationalAvgKg: number): number {
+  return Math.max(1, Math.min(99, Math.round((1 - userMonthlyKg / nationalAvgKg) * 100)));
+}
 
-  const percentile = Math.round((1 - userMonthlyKg / nationalAvgKg) * 100);
-  const topPercent = Math.max(1, Math.min(99, percentile));
-  const vsLast = percentChange(userMonthlyKg, previousSummary.total_carbon_kg);
-
+/**
+ * Shapes comparison values into the API response.
+ * @returns Comparison response payload.
+ */
+function buildComparisonResponse(
+  userMonthlyKg: number,
+  nationalAvgKg: number,
+  vsLast: number,
+  topPercent: number,
+  countryName: string
+) {
   return {
-    user_monthly_kg: userMonthlyKg,
-    national_average_kg: nationalAvgKg,
-    city_average_kg: nationalAvgKg,
-    paris_target_kg: parisTargetKg,
-    vs_last_month_percent: vsLast,
-    top_percent: topPercent,
-    better_than_percent: topPercent,
-    improving: vsLast <= 0,
-    ranking_text: `You're in the top ${topPercent}% in ${countryName}`,
+    user_monthly_kg: userMonthlyKg, national_average_kg: nationalAvgKg,
+    city_average_kg: nationalAvgKg, paris_target_kg: PARIS_TARGET_KG,
+    vs_last_month_percent: vsLast, top_percent: topPercent, better_than_percent: topPercent,
+    improving: vsLast <= 0, ranking_text: `You're in the top ${topPercent}% in ${countryName}`,
     country: countryName,
     message: `Your monthly footprint is ${formatKg(userMonthlyKg)} versus the ${countryName} average of ${formatKg(nationalAvgKg)}.`
   };
@@ -1034,6 +1379,31 @@ async function getChallengeCarbonSnapshot(
   startDate: string,
   endDate: string
 ): Promise<ChallengeCarbonSnapshot> {
+  return await getChallengeCarbonSnapshotWorkflow(userId, startDate, endDate);
+}
+
+/**
+ * Executes the extracted getChallengeCarbonSnapshot service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `getChallengeCarbonSnapshot`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+async function getChallengeCarbonSnapshotWorkflow(
+  userId: string,
+  startDate: string,
+  endDate: string
+): Promise<ChallengeCarbonSnapshot> {
+  const rows = await loadChallengeCarbonRows(userId, startDate, endDate);
+  const category_breakdown = buildChallengeCarbonBreakdown(rows);
+
+  return buildChallengeCarbonSnapshot(category_breakdown);
+}
+
+/**
+ * Loads completed challenge carbon rows inside a date range.
+ * @returns Completed challenge rows with joined challenge data.
+ * @throws When challenge carbon totals cannot be loaded.
+ */
+async function loadChallengeCarbonRows(userId: string, startDate: string, endDate: string) {
   const { data, error } = await supabaseAdmin
     .from("user_challenges")
     .select("completed_at, challenge:challenges(category,carbon_save_kg)")
@@ -1047,36 +1417,53 @@ async function getChallengeCarbonSnapshot(
     throw new Error("Unable to load challenge carbon totals");
   }
 
-  const category_breakdown: Record<CarbonCategory, number> = {
-    food: 0,
-    transport: 0,
-    home: 0,
-    shopping: 0,
-    travel: 0,
-    other: 0
-  };
+  return data ?? [];
+}
 
-  for (const row of data ?? []) {
-    const challengeValue = Array.isArray(row.challenge)
-      ? row.challenge[0]
-      : row.challenge;
-    const category = mapChallengeCategoryToCarbonCategory(
-      challengeValue?.category
-    );
-    const carbonSaveKg = Number(challengeValue?.carbon_save_kg ?? 0);
-    category_breakdown[category] = roundKg(
-      category_breakdown[category] + carbonSaveKg
-    );
+/**
+ * Aggregates completed challenge rows into category carbon totals.
+ * @returns Category breakdown rounded per addition as before.
+ */
+function buildChallengeCarbonBreakdown(rows: Awaited<ReturnType<typeof loadChallengeCarbonRows>>) {
+  const category_breakdown = createEmptyCategoryBreakdown();
+
+  for (const row of rows) {
+    addChallengeCarbonRow(category_breakdown, row);
   }
 
-  const total_carbon_kg = roundKg(
-    Object.values(category_breakdown).reduce((sum, value) => sum + value, 0)
-  );
+  return category_breakdown;
+}
 
-  return {
-    total_carbon_kg,
-    category_breakdown
-  };
+/**
+ * Creates the empty category breakdown shape.
+ * @returns Zeroed category breakdown.
+ */
+function createEmptyCategoryBreakdown(): Record<CarbonCategory, number> {
+  return { food: 0, transport: 0, home: 0, shopping: 0, travel: 0, other: 0 };
+}
+
+/**
+ * Adds one completed challenge row into the category breakdown.
+ * @returns Nothing; mutates the supplied breakdown.
+ */
+function addChallengeCarbonRow(
+  categoryBreakdown: Record<CarbonCategory, number>,
+  row: Awaited<ReturnType<typeof loadChallengeCarbonRows>>[number]
+): void {
+  const challengeValue = Array.isArray(row.challenge) ? row.challenge[0] : row.challenge;
+  const category = mapChallengeCategoryToCarbonCategory(challengeValue?.category);
+  const carbonSaveKg = Number(challengeValue?.carbon_save_kg ?? 0);
+  categoryBreakdown[category] = roundKg(categoryBreakdown[category] + carbonSaveKg);
+}
+
+/**
+ * Shapes category breakdown into a challenge carbon snapshot.
+ * @returns Total carbon and category breakdown.
+ */
+function buildChallengeCarbonSnapshot(category_breakdown: Record<CarbonCategory, number>): ChallengeCarbonSnapshot {
+  const total_carbon_kg = roundKg(Object.values(category_breakdown).reduce((sum, value) => sum + value, 0));
+
+  return { total_carbon_kg, category_breakdown };
 }
 
 function mapChallengeCategoryToCarbonCategory(
@@ -1183,62 +1570,87 @@ function isZeroSummary(summary: Record<string, unknown>): boolean {
 }
 
 function estimateWeeklyFromOnboarding(onboardingData: Json): WeeklyCarbonEstimate | null {
-  if (!onboardingData || typeof onboardingData !== "object" || Array.isArray(onboardingData)) {
+  return estimateWeeklyFromOnboardingWorkflow(onboardingData);
+}
+
+/**
+ * Executes the extracted estimateWeeklyFromOnboarding service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `estimateWeeklyFromOnboarding`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+function estimateWeeklyFromOnboardingWorkflow(onboardingData: Json): WeeklyCarbonEstimate | null {
+  const data = getOnboardingEstimateRecord(onboardingData);
+
+  if (!data) {
     return null;
   }
 
-  const data = onboardingData as Record<string, Json | undefined>;
+  return estimateFromStoredBreakdown(data) ?? estimateFromOnboardingChoices(data);
+}
+
+/**
+ * Normalizes onboarding data into a record for estimation.
+ * @returns Onboarding record or null when unavailable.
+ */
+function getOnboardingEstimateRecord(onboardingData: Json): Record<string, Json | undefined> | null {
+  return onboardingData && typeof onboardingData === "object" && !Array.isArray(onboardingData)
+    ? onboardingData as Record<string, Json | undefined>
+    : null;
+}
+
+/**
+ * Estimates weekly carbon from a stored annual category breakdown.
+ * @returns Weekly estimate or null when no positive total exists.
+ */
+function estimateFromStoredBreakdown(data: Record<string, Json | undefined>): WeeklyCarbonEstimate | null {
   const storedBreakdown = data.category_breakdown;
 
-  if (storedBreakdown && typeof storedBreakdown === "object" && !Array.isArray(storedBreakdown)) {
-    const annualTons = storedBreakdown as Record<string, Json | undefined>;
-    const categories = {
-      food: annualTonsToWeeklyKg(annualTons.food),
-      transport: annualTonsToWeeklyKg(annualTons.transport),
-      home: annualTonsToWeeklyKg(annualTons.home),
-      shopping: annualTonsToWeeklyKg(annualTons.shopping),
-      travel: annualTonsToWeeklyKg(annualTons.travel),
-      other: 0
-    };
-    const weeklyTotal = roundKg(
-      Object.values(categories).reduce((total, value) => total + value, 0)
-    );
-
-    return weeklyTotal > 0 ? { weekly_total: weeklyTotal, categories } : null;
+  if (!storedBreakdown || typeof storedBreakdown !== "object" || Array.isArray(storedBreakdown)) {
+    return null;
   }
 
-  const categories = {
-    transport: weeklyLookup(data.transport_mode, {
-      car: 50,
-      public_transit: 15,
-      bike: 2,
-      wfh: 5,
-      mixed: 25
-    }),
-    food: weeklyLookup(data.meat_frequency, {
-      daily: 35,
-      few_times_week: 25,
-      rarely: 18,
-      never: 12
-    }),
-    shopping: weeklyLookup(data.monthly_spending, {
-      under_2k: 15,
-      "2k_to_5k": 30,
-      "5k_to_10k": 55,
-      over_10k: 85
-    }),
-    home: 20,
-    travel: weeklyLookup(data.flight_frequency, {
-      never: 0,
-      "1_2_yearly": 5,
-      monthly: 25,
-      weekly: 80
-    }),
+  const categories = buildStoredBreakdownCategories(storedBreakdown as Record<string, Json | undefined>);
+  return buildWeeklyEstimate(categories);
+}
+
+/**
+ * Converts annual category tons into weekly category kilograms.
+ * @returns Weekly category estimate.
+ */
+function buildStoredBreakdownCategories(annualTons: Record<string, Json | undefined>) {
+  return {
+    food: annualTonsToWeeklyKg(annualTons.food),
+    transport: annualTonsToWeeklyKg(annualTons.transport),
+    home: annualTonsToWeeklyKg(annualTons.home),
+    shopping: annualTonsToWeeklyKg(annualTons.shopping),
+    travel: annualTonsToWeeklyKg(annualTons.travel),
     other: 0
   };
-  const weeklyTotal = roundKg(
-    Object.values(categories).reduce((total, value) => total + value, 0)
-  );
+}
+
+/**
+ * Estimates weekly carbon from onboarding choice answers.
+ * @returns Weekly estimate or null when no positive total exists.
+ */
+function estimateFromOnboardingChoices(data: Record<string, Json | undefined>): WeeklyCarbonEstimate | null {
+  const categories = {
+    transport: weeklyLookup(data.transport_mode, { car: 50, public_transit: 15, bike: 2, wfh: 5, mixed: 25 }),
+    food: weeklyLookup(data.meat_frequency, { daily: 35, few_times_week: 25, rarely: 18, never: 12 }),
+    shopping: weeklyLookup(data.monthly_spending, { under_2k: 15, "2k_to_5k": 30, "5k_to_10k": 55, over_10k: 85 }),
+    home: 20,
+    travel: weeklyLookup(data.flight_frequency, { never: 0, "1_2_yearly": 5, monthly: 25, weekly: 80 }),
+    other: 0
+  };
+
+  return buildWeeklyEstimate(categories);
+}
+
+/**
+ * Builds a weekly estimate when the category total is positive.
+ * @returns Weekly estimate or null.
+ */
+function buildWeeklyEstimate(categories: Record<CarbonCategory, number>): WeeklyCarbonEstimate | null {
+  const weeklyTotal = roundKg(Object.values(categories).reduce((total, value) => total + value, 0));
 
   return weeklyTotal > 0 ? { weekly_total: weeklyTotal, categories } : null;
 }
@@ -1422,6 +1834,32 @@ async function recalculateCarbonSummary(
   periodStart: string,
   periodEnd: string
 ): Promise<void> {
+  return await recalculateCarbonSummaryWorkflow(userId, periodType, periodStart, periodEnd);
+}
+
+/**
+ * Executes the extracted recalculateCarbonSummary service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `recalculateCarbonSummary`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+async function recalculateCarbonSummaryWorkflow(
+  userId: string,
+  periodType: PeriodType,
+  periodStart: string,
+  periodEnd: string
+): Promise<void> {
+  const transactions = await loadCarbonSummaryTransactions(userId, periodStart, periodEnd);
+  const summary = summarizeCarbonTransactions(transactions);
+
+  await saveCarbonSummary(userId, periodType, periodStart, summary);
+}
+
+/**
+ * Loads transactions for a carbon summary period.
+ * @returns Transaction rows included in the summary.
+ * @throws When transactions cannot be loaded.
+ */
+async function loadCarbonSummaryTransactions(userId: string, periodStart: string, periodEnd: string) {
   const { data, error } = await supabaseAdmin
     .from("transactions")
     .select("carbon_kg,carbon_category")
@@ -1434,47 +1872,75 @@ async function recalculateCarbonSummary(
     throw new Error("Unable to refresh carbon summaries");
   }
 
-  const summary = data.reduce(
-    (current, transaction) => {
-      const carbonKg = Number(transaction.carbon_kg);
-      const categoryKey = `${transaction.carbon_category}_kg` as keyof typeof current;
-      return {
-        ...current,
-        total_carbon_kg: current.total_carbon_kg + carbonKg,
-        [categoryKey]: current[categoryKey] + carbonKg
-      };
-    },
-    {
-      total_carbon_kg: 0,
-      food_kg: 0,
-      transport_kg: 0,
-      home_kg: 0,
-      shopping_kg: 0,
-      travel_kg: 0,
-      other_kg: 0
-    }
-  );
+  return data;
+}
 
-  const { error: upsertError } = await supabaseAdmin.from("carbon_summaries").upsert(
-    {
-      user_id: userId,
-      period_type: periodType,
-      period_start: periodStart,
-      total_carbon_kg: roundKg(summary.total_carbon_kg),
-      food_kg: roundKg(summary.food_kg),
-      transport_kg: roundKg(summary.transport_kg),
-      home_kg: roundKg(summary.home_kg),
-      shopping_kg: roundKg(summary.shopping_kg),
-      travel_kg: roundKg(summary.travel_kg),
-      other_kg: roundKg(summary.other_kg),
-      challenge_savings_kg: 0
-    },
-    { onConflict: "user_id,period_type,period_start" }
-  );
+/**
+ * Aggregates summary transactions by total and category.
+ * @returns Unrounded carbon summary totals.
+ */
+function summarizeCarbonTransactions(transactions: Awaited<ReturnType<typeof loadCarbonSummaryTransactions>>) {
+  return transactions.reduce(addCarbonTransactionToSummary, createEmptyCarbonSummary());
+}
+
+/**
+ * Adds one transaction to a carbon summary accumulator.
+ * @returns Updated summary accumulator.
+ */
+function addCarbonTransactionToSummary(
+  current: ReturnType<typeof createEmptyCarbonSummary>,
+  transaction: Awaited<ReturnType<typeof loadCarbonSummaryTransactions>>[number]
+) {
+  const carbonKg = Number(transaction.carbon_kg);
+  const categoryKey = `${transaction.carbon_category}_kg` as keyof typeof current;
+  return { ...current, total_carbon_kg: current.total_carbon_kg + carbonKg, [categoryKey]: current[categoryKey] + carbonKg };
+}
+
+/**
+ * Creates an empty carbon summary accumulator.
+ * @returns Zeroed carbon summary totals.
+ */
+function createEmptyCarbonSummary() {
+  return { total_carbon_kg: 0, food_kg: 0, transport_kg: 0, home_kg: 0, shopping_kg: 0, travel_kg: 0, other_kg: 0 };
+}
+
+/**
+ * Upserts a rounded carbon summary row.
+ * @returns Resolves after save succeeds.
+ * @throws When the summary cannot be saved.
+ */
+async function saveCarbonSummary(
+  userId: string,
+  periodType: PeriodType,
+  periodStart: string,
+  summary: ReturnType<typeof createEmptyCarbonSummary>
+): Promise<void> {
+  const { error: upsertError } = await supabaseAdmin
+    .from("carbon_summaries")
+    .upsert(buildCarbonSummaryPayload(userId, periodType, periodStart, summary), { onConflict: "user_id,period_type,period_start" });
 
   if (upsertError) {
     throw new Error("Unable to save carbon summaries");
   }
+}
+
+/**
+ * Builds the carbon summary upsert payload.
+ * @returns Rounded database payload for the summary period.
+ */
+function buildCarbonSummaryPayload(
+  userId: string,
+  periodType: PeriodType,
+  periodStart: string,
+  summary: ReturnType<typeof createEmptyCarbonSummary>
+) {
+  return {
+    user_id: userId, period_type: periodType, period_start: periodStart,
+    total_carbon_kg: roundKg(summary.total_carbon_kg), food_kg: roundKg(summary.food_kg),
+    transport_kg: roundKg(summary.transport_kg), home_kg: roundKg(summary.home_kg),
+    shopping_kg: roundKg(summary.shopping_kg), travel_kg: roundKg(summary.travel_kg),
+    other_kg: roundKg(summary.other_kg), challenge_savings_kg: 0
+  };
 }
 
 function getPeriodBounds(date: string, periodType: PeriodType) {

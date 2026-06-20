@@ -34,65 +34,87 @@ const streakMilestoneBonusXp = new Map<number, number>([
 export async function incrementStreak(
   userId: string
 ): Promise<IncrementStreakResult> {
+  return await incrementStreakWorkflow(userId);
+}
+
+/**
+ * Executes the extracted incrementStreak service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `incrementStreak`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+type StreakState = { streak_count: number; streak_max: number };
+
+type NextStreakState = {
+  nextStreak: number;
+  nextMax: number;
+  milestoneBonusXp: number;
+};
+
+async function incrementStreakWorkflow(userId: string): Promise<IncrementStreakResult> {
   const today = todayIndia();
+  const user = await loadStreakState(userId);
+  if ((await countCompletedChallengesForDate(userId, today)) > 1) return buildUnchangedStreakResult(user);
 
-  const { data: user, error: userError } = await supabaseAdmin
-    .from("users")
-    .select("streak_count,streak_max")
-    .eq("id", userId)
-    .single<{ streak_count: number; streak_max: number }>();
+  const next = getNextStreakState(user);
+  await saveIncrementedStreak(userId, today, next);
+  if (next.milestoneBonusXp > 0) await addXP(userId, next.milestoneBonusXp);
+  return buildIncrementStreakResult(next);
+}
 
-  if (userError || !user) {
-    throw new Error("Unable to load streak state");
-  }
+/**
+ * Loads the current streak counters for a user.
+ * @returns Current streak state.
+ * @throws When streak state cannot be loaded.
+ */
+async function loadStreakState(userId: string): Promise<StreakState> {
+  const { data: user, error } = await supabaseAdmin.from("users").select("streak_count,streak_max").eq("id", userId).single<StreakState>();
+  if (error || !user) throw new Error("Unable to load streak state");
+  return user;
+}
 
-  const { count: completedToday, error: completedTodayError } = await supabaseAdmin
-    .from("user_challenges")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", userId)
-    .eq("status", "completed")
-    .eq("date_assigned", today);
+/**
+ * Counts completed challenges assigned on a specific date.
+ * @returns Completed challenge count.
+ * @throws When completion count cannot be checked.
+ */
+async function countCompletedChallengesForDate(userId: string, date: string): Promise<number> {
+  const { count, error } = await supabaseAdmin.from("user_challenges").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("status", "completed").eq("date_assigned", date);
+  if (error) throw new Error("Unable to check today's streak completion");
+  return count ?? 0;
+}
 
-  if (completedTodayError) {
-    throw new Error("Unable to check today's streak completion");
-  }
-
-  if ((completedToday ?? 0) > 1) {
-    return {
-      streak_count: user.streak_count,
-      streak_max: user.streak_max,
-      is_milestone: false,
-      milestone_bonus_xp: 0
-    };
-  }
-
+/**
+ * Calculates next streak counters and milestone bonus.
+ * @returns Next streak state.
+ */
+function getNextStreakState(user: StreakState): NextStreakState {
   const nextStreak = user.streak_count + 1;
-  const nextMax = Math.max(user.streak_max, nextStreak);
-  const milestoneBonusXp = streakMilestoneBonusXp.get(nextStreak) ?? 0;
+  return { nextStreak, nextMax: Math.max(user.streak_max, nextStreak), milestoneBonusXp: streakMilestoneBonusXp.get(nextStreak) ?? 0 };
+}
 
-  const { error: updateError } = await supabaseAdmin
-    .from("users")
-    .update({
-      streak_count: nextStreak,
-      streak_max: nextMax,
-      streak_last_checked_date: today
-    })
-    .eq("id", userId);
+/**
+ * Persists incremented streak counters.
+ * @throws When streak counters cannot be saved.
+ */
+async function saveIncrementedStreak(userId: string, today: string, next: NextStreakState): Promise<void> {
+  const { error } = await supabaseAdmin.from("users").update({ streak_count: next.nextStreak, streak_max: next.nextMax, streak_last_checked_date: today }).eq("id", userId);
+  if (error) throw new Error("Unable to update streak");
+}
 
-  if (updateError) {
-    throw new Error("Unable to update streak");
-  }
+/**
+ * Builds a result when the streak should not increment again.
+ * @returns Current streak result with no milestone bonus.
+ */
+function buildUnchangedStreakResult(user: StreakState): IncrementStreakResult {
+  return { streak_count: user.streak_count, streak_max: user.streak_max, is_milestone: false, milestone_bonus_xp: 0 };
+}
 
-  if (milestoneBonusXp > 0) {
-    await addXP(userId, milestoneBonusXp);
-  }
-
-  return {
-    streak_count: nextStreak,
-    streak_max: nextMax,
-    is_milestone: milestoneBonusXp > 0,
-    milestone_bonus_xp: milestoneBonusXp
-  };
+/**
+ * Builds the incremented streak result.
+ * @returns Incremented streak payload.
+ */
+function buildIncrementStreakResult(next: NextStreakState): IncrementStreakResult {
+  return { streak_count: next.nextStreak, streak_max: next.nextMax, is_milestone: next.milestoneBonusXp > 0, milestone_bonus_xp: next.milestoneBonusXp };
 }
 
 /**
@@ -103,73 +125,68 @@ export async function incrementStreak(
 export async function checkAndResetStreak(
   userId: string
 ): Promise<StreakResetResult> {
+  return await checkAndResetStreakWorkflow(userId);
+}
+
+/**
+ * Executes the extracted checkAndResetStreak service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `checkAndResetStreak`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+type StreakResetState = {
+  streak_count: number;
+  streak_freeze_available: boolean;
+  streak_last_checked_date: string | null;
+};
+
+async function checkAndResetStreakWorkflow(userId: string): Promise<StreakResetResult> {
   const today = todayIndia();
-  const yesterday = yesterdayIndia();
+  const user = await loadStreakResetState(userId);
+  if (user.streak_last_checked_date === today) return { streak_safe: true, already_checked: true };
+  if ((await countCompletedChallengesForDate(userId, yesterdayIndia())) > 0 || user.streak_count === 0) return markSafeStreak(userId, today);
+  if (user.streak_freeze_available) return useAvailableStreakFreeze(userId, today);
+  return resetExpiredStreak(userId, today, user.streak_count);
+}
 
-  const { data: user, error: userError } = await supabaseAdmin
-    .from("users")
-    .select("streak_count,streak_freeze_available,streak_last_checked_date")
-    .eq("id", userId)
-    .single<{
-      streak_count: number;
-      streak_freeze_available: boolean;
-      streak_last_checked_date: string | null;
-    }>();
+/**
+ * Loads streak reset state for a user.
+ * @returns State needed to determine streak reset behavior.
+ * @throws When streak state cannot be loaded.
+ */
+async function loadStreakResetState(userId: string): Promise<StreakResetState> {
+  const { data: user, error } = await supabaseAdmin.from("users").select("streak_count,streak_freeze_available,streak_last_checked_date").eq("id", userId).single<StreakResetState>();
+  if (error || !user) throw new Error("Unable to load streak state");
+  return user;
+}
 
-  if (userError || !user) {
-    throw new Error("Unable to load streak state");
-  }
+/**
+ * Marks a streak as checked and safe for today.
+ * @returns Safe streak result.
+ */
+async function markSafeStreak(userId: string, today: string): Promise<StreakResetResult> {
+  await markStreakChecked(userId, today);
+  return { streak_safe: true, already_checked: false };
+}
 
-  if (user.streak_last_checked_date === today) {
-    return { streak_safe: true, already_checked: true };
-  }
+/**
+ * Consumes an available streak freeze.
+ * @returns Freeze-saved streak result.
+ * @throws When the freeze cannot be saved.
+ */
+async function useAvailableStreakFreeze(userId: string, today: string): Promise<StreakResetResult> {
+  const { error } = await supabaseAdmin.from("users").update({ streak_freeze_available: false, streak_last_checked_date: today }).eq("id", userId);
+  if (error) throw new Error("Unable to use streak freeze");
+  return { streak_saved: true, freeze_used: true };
+}
 
-  const { count: completedYesterday, error: completionError } =
-    await supabaseAdmin
-      .from("user_challenges")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", userId)
-      .eq("status", "completed")
-      .eq("date_assigned", yesterday);
-
-  if (completionError) {
-    throw new Error("Unable to check streak history");
-  }
-
-  if ((completedYesterday ?? 0) > 0 || user.streak_count === 0) {
-    await markStreakChecked(userId, today);
-    return { streak_safe: true, already_checked: false };
-  }
-
-  if (user.streak_freeze_available) {
-    const { error } = await supabaseAdmin
-      .from("users")
-      .update({
-        streak_freeze_available: false,
-        streak_last_checked_date: today
-      })
-      .eq("id", userId);
-
-    if (error) {
-      throw new Error("Unable to use streak freeze");
-    }
-
-    return { streak_saved: true, freeze_used: true };
-  }
-
-  const previousStreak = user.streak_count;
-  const { error } = await supabaseAdmin
-    .from("users")
-    .update({
-      streak_count: 0,
-      streak_last_checked_date: today
-    })
-    .eq("id", userId);
-
-  if (error) {
-    throw new Error("Unable to reset streak");
-  }
-
+/**
+ * Resets an expired streak.
+ * @returns Reset streak result with the previous count.
+ * @throws When the reset cannot be saved.
+ */
+async function resetExpiredStreak(userId: string, today: string, previousStreak: number): Promise<StreakResetResult> {
+  const { error } = await supabaseAdmin.from("users").update({ streak_count: 0, streak_last_checked_date: today }).eq("id", userId);
+  if (error) throw new Error("Unable to reset streak");
   return { streak_reset: true, previous_streak: previousStreak };
 }
 
@@ -183,35 +200,54 @@ export async function regenerateStreakFreeze(userId: string): Promise<{
   success: true;
   freeze_available: boolean;
 }> {
-  const { data: user, error: userError } = await supabaseAdmin
-    .from("users")
-    .select("created_at,streak_freeze_available")
-    .eq("id", userId)
-    .single<{ created_at: string; streak_freeze_available: boolean }>();
+  return await regenerateStreakFreezeWorkflow(userId);
+}
 
-  if (userError || !user) {
-    throw new Error("Unable to load streak freeze state");
-  }
+/**
+ * Executes the extracted regenerateStreakFreeze service workflow without changing side-effect order or return shape.
+ * @returns The same value previously returned by `regenerateStreakFreeze`.
+ * @throws The same persistence, validation, or upstream errors as the original workflow.
+ */
+type StreakFreezeState = { created_at: string; streak_freeze_available: boolean };
 
-  const ageDays = Math.floor(
-    (Date.now() - new Date(user.created_at).getTime()) / (24 * 60 * 60 * 1000)
-  );
-  const shouldRegenerate = ageDays > 0 && ageDays % 7 === 0;
-
-  if (!user.streak_freeze_available && shouldRegenerate) {
-    const { error } = await supabaseAdmin
-      .from("users")
-      .update({ streak_freeze_available: true })
-      .eq("id", userId);
-
-    if (error) {
-      throw new Error("Unable to regenerate streak freeze");
-    }
-
-    return { success: true, freeze_available: true };
-  }
-
+async function regenerateStreakFreezeWorkflow(userId: string): Promise<{
+  success: true;
+  freeze_available: boolean;
+}> {
+  const user = await loadStreakFreezeState(userId);
+  if (!user.streak_freeze_available && shouldRegenerateStreakFreeze(user.created_at)) return enableStreakFreeze(userId);
   return { success: true, freeze_available: user.streak_freeze_available };
+}
+
+/**
+ * Loads state needed to determine streak freeze regeneration.
+ * @returns Current freeze state.
+ * @throws When freeze state cannot be loaded.
+ */
+async function loadStreakFreezeState(userId: string): Promise<StreakFreezeState> {
+  const { data: user, error } = await supabaseAdmin.from("users").select("created_at,streak_freeze_available").eq("id", userId).single<StreakFreezeState>();
+  if (error || !user) throw new Error("Unable to load streak freeze state");
+  return user;
+}
+
+/**
+ * Determines whether account age hits the weekly regeneration cadence.
+ * @returns Whether a freeze should regenerate today.
+ */
+function shouldRegenerateStreakFreeze(createdAt: string): boolean {
+  const ageDays = Math.floor((Date.now() - new Date(createdAt).getTime()) / (24 * 60 * 60 * 1000));
+  return ageDays > 0 && ageDays % 7 === 0;
+}
+
+/**
+ * Enables a regenerated streak freeze.
+ * @returns Enabled freeze result.
+ * @throws When the freeze flag cannot be saved.
+ */
+async function enableStreakFreeze(userId: string): Promise<{ success: true; freeze_available: boolean }> {
+  const { error } = await supabaseAdmin.from("users").update({ streak_freeze_available: true }).eq("id", userId);
+  if (error) throw new Error("Unable to regenerate streak freeze");
+  return { success: true, freeze_available: true };
 }
 
 /**
