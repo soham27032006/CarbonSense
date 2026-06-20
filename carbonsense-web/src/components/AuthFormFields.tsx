@@ -1,4 +1,4 @@
-import { forwardRef, type InputHTMLAttributes, type ReactNode } from "react";
+import { forwardRef, useId, type InputHTMLAttributes, type ReactNode } from "react";
 
 interface FieldProps extends InputHTMLAttributes<HTMLInputElement> {
   label: string;
@@ -8,6 +8,8 @@ interface FieldProps extends InputHTMLAttributes<HTMLInputElement> {
 
 export const Field = forwardRef<HTMLInputElement, FieldProps>(
   ({ label, icon, error, className = "", ...props }, ref) => {
+    const inputId = useId();
+    const errorId = `${inputId}-error`;
     return (
       <label className="block">
         <span className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -20,14 +22,21 @@ export const Field = forwardRef<HTMLInputElement, FieldProps>(
             </span>
           )}
           <input
+            id={inputId}
             ref={ref}
             {...props}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? errorId : undefined}
             className={`w-full rounded-2xl border border-white/10 bg-white/[0.04] py-3 ${
               icon ? "pl-11" : "pl-4"
             } pr-4 text-sm text-foreground placeholder:text-muted-foreground/60 outline-none transition-all focus:border-primary/60 focus:bg-white/[0.06] focus:ring-2 focus:ring-primary/30 ${className}`}
           />
         </span>
-        {error && <span className="mt-1.5 block text-xs text-destructive">{error}</span>}
+        {error && (
+          <span id={errorId} role="alert" className="mt-1.5 block text-xs text-destructive">
+            {error}
+          </span>
+        )}
       </label>
     );
   },

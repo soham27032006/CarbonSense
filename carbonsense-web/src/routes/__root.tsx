@@ -11,7 +11,7 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Toaster } from "react-hot-toast";
 import { BarChart3, Home, Leaf, Trophy, UserCircle, X } from "lucide-react";
@@ -20,6 +20,7 @@ import appCss from "../styles.css?url";
 import responsiveCss from "../styles/responsive.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { useAuthListener } from "@/hooks/useAuthListener";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
 import { CopilotProvider } from "@/components/copilot/CopilotProvider";
 import { AppGate } from "@/components/AppGate";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -69,7 +70,11 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   }, [error]);
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <div
+      role="alert"
+      aria-live="assertive"
+      className="flex min-h-screen items-center justify-center bg-background px-4"
+    >
       <div className="max-w-md text-center">
         <h1 className="text-xl font-semibold tracking-tight text-foreground">
           This page didn't load
@@ -289,6 +294,8 @@ function MobileNavDrawer({
   pathname: string;
   onClose: () => void;
 }) {
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const drawerRef = useFocusTrap<HTMLDivElement>(open, { initialFocusRef: closeButtonRef });
   return (
     <AnimatePresence>
       {open && (
@@ -305,11 +312,13 @@ function MobileNavDrawer({
           />
           <motion.aside
             key="mobile-nav-drawer"
+            ref={drawerRef}
             initial={{ x: "-100%" }}
             animate={{ x: 0 }}
             exit={{ x: "-100%" }}
             transition={{ type: "spring", stiffness: 320, damping: 32 }}
             role="dialog"
+            aria-modal="true"
             aria-label="Primary navigation"
             className="fixed inset-y-0 left-0 z-[71] flex w-72 max-w-[85vw] flex-col gap-2 border-r border-white/10 bg-[oklch(0.18_0.03_180)] p-5 shadow-2xl lg:hidden"
           >
@@ -325,6 +334,7 @@ function MobileNavDrawer({
                 <span className="tracking-tight">CarbonSense</span>
               </Link>
               <button
+                ref={closeButtonRef}
                 type="button"
                 onClick={onClose}
                 aria-label="Close navigation"

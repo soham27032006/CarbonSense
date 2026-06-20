@@ -66,7 +66,13 @@ function SplashScreen() {
         <div className="text-3xl font-extrabold tracking-tight text-foreground">
           <span className="text-primary">✦</span> CarbonSense
         </div>
-        <div className="text-xs uppercase tracking-[0.3em] text-muted-foreground">
+        <div
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuetext="Loading CarbonSense"
+          className="text-xs uppercase tracking-[0.3em] text-muted-foreground"
+        >
           Sense the change
         </div>
       </div>

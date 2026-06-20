@@ -40,6 +40,10 @@ const explicitAllowedOrigins = new Set(
 );
 
 function isAllowedDevOrigin(origin: string) {
+  if (env.NODE_ENV === "production") {
+    return false;
+  }
+
   try {
     const parsed = new URL(origin);
     return (
@@ -51,7 +55,25 @@ function isAllowedDevOrigin(origin: string) {
   }
 }
 
-app.use(helmet());
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        defaultSrc: ["'self'"],
+        baseUri: ["'self'"],
+        frameAncestors: ["'none'"],
+        objectSrc: ["'none'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:", "https:"],
+        connectSrc: ["'self'"],
+        formAction: ["'self'"]
+      }
+    },
+    referrerPolicy: { policy: "no-referrer" }
+  })
+);
 app.use(
   cors({
     origin(origin, callback) {

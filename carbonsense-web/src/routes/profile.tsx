@@ -763,6 +763,7 @@ function NotificationsSection({
           right={
             prefs.daily_challenge.enabled ? (
               <input
+                aria-label="Daily challenge reminder time"
                 type="time"
                 value={prefs.daily_challenge.time}
                 onChange={(e) =>
@@ -1050,6 +1051,26 @@ function ModalShell({
   children: React.ReactNode;
   size?: "md" | "lg";
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dialog?.querySelector<HTMLElement>("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])")?.focus();
+    return () => previous?.focus();
+  }, []);
+
+  const trapFocus = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape") onClose();
+    if (event.key !== "Tab") return;
+    const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])") ?? []).filter((el) => !el.hasAttribute("disabled"));
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -1059,18 +1080,25 @@ function ModalShell({
       onClick={onClose}
     >
       <motion.div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Profile dialog"
         initial={{ y: 40, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: 40, opacity: 0 }}
         transition={{ type: "spring", stiffness: 320, damping: 30 }}
         className={`relative w-full rounded-t-3xl border border-white/10 bg-[oklch(0.22_0.035_180)] p-6 sm:rounded-3xl ${size === "lg" ? "max-w-lg" : "max-w-md"}`}
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={trapFocus}
       >
         <button
+          type="button"
           onClick={onClose}
+          aria-label="Close dialog"
           className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/5 text-muted-foreground transition hover:bg-white/10"
         >
-          <X className="h-4 w-4" />
+          <X className="h-4 w-4" aria-hidden="true" />
         </button>
         {children}
       </motion.div>
@@ -1121,10 +1149,11 @@ function EditProfileModal({
             )}
           </div>
           <div className="flex-1">
-            <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+            <label htmlFor="profile-avatar-url" className="mb-1.5 block text-xs font-medium text-muted-foreground">
               Avatar URL
             </label>
             <input
+              id="profile-avatar-url"
               value={avatarUrl}
               onChange={(e) => setAvatarUrl(e.target.value)}
               placeholder="https://…"
@@ -1150,7 +1179,7 @@ function EditProfileModal({
         disabled={busy || !name.trim()}
         className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-400 to-teal-300 px-4 py-3 text-sm font-semibold text-emerald-950 disabled:opacity-50"
       >
-        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Save
+        {busy ? <Loader2 role="status" aria-label="Saving profile" className="h-4 w-4 animate-spin" /> : null} Save
       </button>
     </ModalShell>
   );
@@ -1349,7 +1378,7 @@ function DeleteAccountModal({
           disabled={!armed || busy}
           className="flex-1 rounded-xl bg-rose-500/90 px-4 py-3 text-sm font-semibold text-rose-50 transition hover:bg-rose-500 disabled:opacity-40"
         >
-          {busy ? <Loader2 className="mx-auto h-4 w-4 animate-spin" /> : "Delete forever"}
+          {busy ? <Loader2 role="status" aria-label="Deleting account" className="mx-auto h-4 w-4 animate-spin" /> : "Delete forever"}
         </button>
       </div>
     </ModalShell>

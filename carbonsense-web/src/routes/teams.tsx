@@ -3,7 +3,7 @@
  */
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   Check,
@@ -103,7 +103,7 @@ function TeamsPage() {
         <div className="mt-8">
           {teams === null ? (
             <div className="flex justify-center py-16">
-              <Loader2 className="h-6 w-6 animate-spin text-emerald-300" />
+              <Loader2 role="status" aria-label="Loading teams" className="h-6 w-6 animate-spin text-emerald-300" />
             </div>
           ) : teams.length === 0 ? (
             <EmptyState onCreate={() => setCreateOpen(true)} onJoin={() => setJoinOpen(true)} />
@@ -213,6 +213,26 @@ function EmptyState({ onCreate, onJoin }: { onCreate: () => void; onJoin: () => 
 // ----------------- Modals -----------------
 
 function ModalShell({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dialog?.querySelector<HTMLElement>("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])")?.focus();
+    return () => previous?.focus();
+  }, []);
+
+  const trapFocus = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape") onClose();
+    if (event.key !== "Tab") return;
+    const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])") ?? []).filter((el) => !el.hasAttribute("disabled"));
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -222,18 +242,25 @@ function ModalShell({ onClose, children }: { onClose: () => void; children: Reac
       onClick={onClose}
     >
       <motion.div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Team dialog"
         initial={{ y: 40, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: 40, opacity: 0 }}
         transition={{ type: "spring", stiffness: 320, damping: 30 }}
         className="modal-sheet relative max-w-md border border-white/10 bg-[oklch(0.22_0.035_180)] p-6"
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={trapFocus}
       >
         <button
+          type="button"
           onClick={onClose}
+          aria-label="Close dialog"
           className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/5 text-muted-foreground transition hover:bg-white/10"
         >
-          <X className="h-4 w-4" />
+          <X className="h-4 w-4" aria-hidden="true" />
         </button>
         {children}
       </motion.div>
@@ -404,13 +431,19 @@ function JoinTeamModal({ onClose, onJoined }: { onClose: () => void; onJoined: (
       <p className="mt-1 text-sm text-muted-foreground">Got an invite code? Drop it below.</p>
       <div className="mt-5">
         <input
+          aria-label="Team invite code"
+          aria-describedby={error ? "join-team-error" : undefined}
           autoFocus
           value={code}
           onChange={(e) => setCode(e.target.value.toUpperCase())}
           placeholder="INVITE CODE"
           className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 text-center font-mono text-lg tracking-[0.25em] outline-none focus:border-emerald-300/50"
         />
-        {error && <p className="mt-2 text-center text-sm text-rose-300">{error}</p>}
+        {error && (
+          <p id="join-team-error" role="alert" aria-live="assertive" className="mt-2 text-center text-sm text-rose-300">
+            {error}
+          </p>
+        )}
         <p className="mt-2 text-center text-xs text-muted-foreground">
           Try <span className="font-mono">GREEN42</span> or <span className="font-mono">ACME88</span>
         </p>
@@ -420,7 +453,7 @@ function JoinTeamModal({ onClose, onJoined }: { onClose: () => void; onJoined: (
         disabled={busy || !code.trim()}
         className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-400 to-teal-300 px-4 py-3 text-sm font-semibold text-emerald-950 disabled:opacity-50"
       >
-        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+        {busy ? <Loader2 role="status" aria-label="Joining team" className="h-4 w-4 animate-spin" /> : null}
         Join Team
       </button>
     </ModalShell>

@@ -253,6 +253,7 @@ function TransactionsPage() {
           <select
             value={dateRange}
             onChange={(e) => setDateRange(e.target.value)}
+            aria-label="Filter transactions by date range"
             className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-foreground outline-none focus:border-emerald-300/40"
           >
             {DATE_RANGES.map((r) => (
@@ -264,11 +265,14 @@ function TransactionsPage() {
         </div>
 
         {/* list */}
-        <div className="mt-4 space-y-2">
+        <div className="mt-4 space-y-2" aria-live="polite" aria-busy={loading}>
           {loading ? (
-            Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="h-16 animate-pulse rounded-2xl bg-white/5" />
-            ))
+            <>
+              <span className="sr-only">Loading transactions…</span>
+              {Array.from({ length: 8 }).map((_, i) => (
+                <div key={i} className="h-16 animate-pulse rounded-2xl bg-white/5" />
+              ))}
+            </>
           ) : filtered.length === 0 ? (
             <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-8 text-center text-sm text-muted-foreground">
               No transactions for this filter.

@@ -48,11 +48,6 @@ export function rateLimit(options: RateLimitOptions = {}) {
   const keyPrefix = options.keyPrefix ?? "rate-limit";
 
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    if (process.env.NODE_ENV !== "production") {
-      next();
-      return;
-    }
-
     try {
       const identifier = getClientIdentifier(req);
       const key = `${keyPrefix}:${identifier}`;

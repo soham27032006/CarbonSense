@@ -41,7 +41,11 @@ export class ErrorBoundary extends Component<
     if (this.state.hasError) {
       return (
         this.props.fallback ?? (
-          <div className="flex min-h-[60vh] flex-col items-center justify-center px-6 text-center">
+          <div
+            role="alert"
+            aria-live="assertive"
+            className="flex min-h-[60vh] flex-col items-center justify-center px-6 text-center"
+          >
             <div className="mb-4 grid h-14 w-14 place-items-center rounded-full bg-rose-400/10 text-2xl">
               !
             </div>
