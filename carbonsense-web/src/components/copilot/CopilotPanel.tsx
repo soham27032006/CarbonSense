@@ -9,6 +9,7 @@ import {
   useCopilotSuggestions,
 } from "@/hooks/useApi";
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
 
 type MessageRole = "user" | "assistant";
 
@@ -82,6 +83,7 @@ export function CopilotPanel({ onClose }: { onClose: () => void }) {
 
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const dialogRef = useFocusTrap<HTMLElement>(true, { initialFocusRef: inputRef });
 
   useEffect(() => {
     if (suggestionsQuery.data?.suggestions?.length) {
@@ -95,11 +97,6 @@ export function CopilotPanel({ onClose }: { onClose: () => void }) {
       setHasHistory(true);
     }
   }, [historyQuery.data]);
-
-  useEffect(() => {
-    const timeoutId = window.setTimeout(() => inputRef.current?.focus(), 250);
-    return () => window.clearTimeout(timeoutId);
-  }, []);
 
   useBodyScrollLock(true);
 
@@ -245,6 +242,7 @@ export function CopilotPanel({ onClose }: { onClose: () => void }) {
       />
 
       <motion.section
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="AI Copilot"
@@ -335,6 +333,7 @@ export function CopilotPanel({ onClose }: { onClose: () => void }) {
               rows={1}
               value={input}
               disabled={sending}
+              aria-label="Message AI Copilot"
               onChange={(event) => {
                 setInput(event.target.value);
                 event.currentTarget.style.height = "auto";
@@ -359,7 +358,7 @@ export function CopilotPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function Bubble({ msg, reduceMotion }: { msg: Msg; reduceMotion: boolean }) {
+function Bubble({ msg, reduceMotion }: { msg: Msg; reduceMotion: boolean | null }) {
   const motionProps = reduceMotion
     ? {
         initial: false as const,
@@ -403,7 +402,7 @@ function Bubble({ msg, reduceMotion }: { msg: Msg; reduceMotion: boolean }) {
   );
 }
 
-function TypingDots({ reduceMotion }: { reduceMotion: boolean }) {
+function TypingDots({ reduceMotion }: { reduceMotion: boolean | null }) {
   if (reduceMotion) {
     return <span className="py-1 text-sm text-emerald-100/85">Thinking...</span>;
   }

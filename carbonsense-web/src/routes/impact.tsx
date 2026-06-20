@@ -1247,9 +1247,9 @@ function titleizeKey(key: string) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function getEquivalencyConfig(id: string) {
+function getEquivalencyConfig(id: keyof typeof EQUIVALENCY_CONFIG | (string & {})) {
   return (
-    EQUIVALENCY_CONFIG[id] ?? {
+    EQUIVALENCY_CONFIG[id as keyof typeof EQUIVALENCY_CONFIG] ?? {
       title: titleizeKey(id),
       icon: "🌍",
       unit: titleizeKey(id).toLowerCase(),

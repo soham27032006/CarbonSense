@@ -934,7 +934,7 @@ function LibraryTab() {
       </div>
 
       {visibleSections.map((sec) => {
-        const secItems = items.filter((it) => it.category === sec.key);
+        const secItems = items.filter((it: LibItem) => it.category === sec.key);
         return (
           <div key={sec.key}>
             <h3 className="mb-3 flex items-center gap-2 text-base font-semibold">
@@ -946,7 +946,7 @@ function LibraryTab() {
               </p>
             ) : (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {secItems.map((it) => (
+                {secItems.map((it: LibItem) => (
                   <LibCard key={it.id} item={it} />
                 ))}
               </div>
