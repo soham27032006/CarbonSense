@@ -267,6 +267,7 @@ function HomePage() {
               breakdown={dashboard.this_week.category_breakdown}
               total={dashboard.this_week.total_carbon_kg}
               estimated={Boolean(dashboard.this_week.is_estimated)}
+              hasCompletedChallenge={status === "completed"}
               unitSystem={unitSystem}
             />
           </>
@@ -646,18 +647,20 @@ function WeeklyBreakdown({
   breakdown,
   total,
   estimated,
+  hasCompletedChallenge,
   unitSystem,
 }: {
   breakdown: Record<Category, number>;
   total: number;
   estimated: boolean;
+  hasCompletedChallenge: boolean;
   unitSystem: UnitSystem;
 }) {
   const entries = (Object.entries(breakdown) as [Category, number][]).sort(
     (a, b) => b[1] - a[1],
   );
   const max = Math.max(...entries.map(([, v]) => v), 0.1);
-  const hasData = entries.some(([, kg]) => kg > 0);
+  const hasData = hasCompletedChallenge || entries.some(([, kg]) => kg > 0);
 
   return (
     <section className="mt-5 rounded-2xl border border-white/10 bg-white/[0.04] p-5">

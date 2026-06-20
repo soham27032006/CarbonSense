@@ -18,7 +18,13 @@ import {
 import toast from "react-hot-toast";
 import { useUnits } from "@/contexts/UnitsContext";
 import { api } from "@/lib/api";
-import { useChallengeLibrary } from "@/hooks/useApi";
+import {
+  useAcceptChallenge,
+  useChallengeLibrary,
+  useCompleteChallenge,
+  useSkipChallenge,
+  useTodayChallenge,
+} from "@/hooks/useApi";
 import { useAuthStore } from "@/stores/authStore";
 import { StickyHeader } from "@/components/StickyHeader";
 import { convertCO2, formatCO2, getCO2Label, pluralize, pluralizeNoun, type UnitSystem } from "@/utils/units";
@@ -41,6 +47,8 @@ export const Route = createFileRoute("/challenges")({
 type Status = "pending" | "accepted" | "completed" | "skipped";
 type LibCategory = "food" | "transport" | "home" | "shopping" | "lifestyle";
 type LibraryFilter = "all" | LibCategory;
+const STREAK_WINDOW_DAYS = 14;
+const TODAY_STREAK_INDEX = STREAK_WINDOW_DAYS - 1;
 
 interface TodayChallenge {
   id: string;
@@ -204,8 +212,6 @@ function Tabs({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }) {
 function TodayTab({ onBrowseLibrary }: { onBrowseLibrary: () => void }) {
   const { unitSystem } = useUnits();
   const [challenge, setChallenge] = useState<TodayChallenge | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>("pending");
   const [busy, setBusy] = useState(false);
   const [skipOpen, setSkipOpen] = useState(false);
@@ -215,28 +221,25 @@ function TodayTab({ onBrowseLibrary }: { onBrowseLibrary: () => void }) {
   const [altOffset, setAltOffset] = useState(0);
   const [swapDir, setSwapDir] = useState(0);
   const [tipsOpen, setTipsOpen] = useState(false);
-
-  const load = async (alt = 0) => {
-    setLoadError(null);
-    try {
-      const { data } = await api.get<TodayChallenge>("/challenges/today", {
-        params: { alt },
-      });
-      setChallenge(data);
-      setStatus(data.assignment?.status ?? "pending");
-    } catch {
-      setChallenge(null);
-      setLoadError("Couldn't load today's challenge.");
-      toast.error("Couldn't load today's challenge.", { id: "challenge-today-load-error" });
-    } finally {
-      setLoading(false);
-    }
-  };
+  const todayChallengeQuery = useTodayChallenge({ alt: altOffset });
+  const acceptMutation = useAcceptChallenge();
+  const completeMutation = useCompleteChallenge();
+  const skipMutation = useSkipChallenge();
 
   useEffect(() => {
-    load(0);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (todayChallengeQuery.data) {
+      const nextChallenge = todayChallengeQuery.data as TodayChallenge;
+      setChallenge(nextChallenge);
+      setStatus(nextChallenge.assignment?.status ?? "pending");
+    }
+  }, [todayChallengeQuery.data]);
+
+  useEffect(() => {
+    if (todayChallengeQuery.isError) {
+      setChallenge(null);
+      toast.error("Couldn't load today's challenge.", { id: "challenge-today-load-error" });
+    }
+  }, [todayChallengeQuery.isError]);
 
   const accept = async () => {
     if (!challenge) return;
@@ -247,7 +250,7 @@ function TodayTab({ onBrowseLibrary }: { onBrowseLibrary: () => void }) {
     }
     setBusy(true);
     try {
-      await api.post(`/challenges/${assignmentId}/accept`, {});
+      await acceptMutation.mutateAsync(assignmentId);
       setStatus("accepted");
       toast.success("Challenge accepted — go get it.");
     } catch {
@@ -266,14 +269,14 @@ function TodayTab({ onBrowseLibrary }: { onBrowseLibrary: () => void }) {
     }
     setBusy(true);
     try {
-      const { data } = await api.post<{
+      const data = (await completeMutation.mutateAsync(assignmentId)) as {
         xp_earned: number;
         new_total_xp: number;
         streak_count: number;
         is_streak_milestone: boolean;
         level_up: boolean;
         achievements_earned: string[];
-      }>(`/challenges/${assignmentId}/complete`, {});
+      };
       setStatus("completed");
       setCelebrateXp(typeof data?.xp_earned === "number" ? data.xp_earned : 0);
       setCelebrateLevelUp(Boolean(data?.level_up));
@@ -296,12 +299,11 @@ function TodayTab({ onBrowseLibrary }: { onBrowseLibrary: () => void }) {
     setSkipOpen(false);
     setBusy(true);
     try {
-      await api.post(`/challenges/${assignmentId}/skip`, { reason });
+      await skipMutation.mutateAsync({ id: assignmentId, reason });
       const next = altOffset + 1;
       setAltOffset(next);
       setSwapDir(1);
       setStatus("skipped");
-      await load(next);
       setStatus("pending");
       toast.success("Here's another one for you.");
     } catch {
@@ -311,7 +313,7 @@ function TodayTab({ onBrowseLibrary }: { onBrowseLibrary: () => void }) {
     }
   };
 
-  if (loading) {
+  if (todayChallengeQuery.isLoading) {
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
         <div className="h-80 animate-pulse rounded-3xl bg-white/5" />
@@ -321,18 +323,17 @@ function TodayTab({ onBrowseLibrary }: { onBrowseLibrary: () => void }) {
     );
   }
 
-  if (loadError) {
+  if (todayChallengeQuery.isError) {
     return (
       <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-8 text-center">
-        <p className="text-base font-semibold">{loadError}</p>
+        <p className="text-base font-semibold">Couldn't load today's challenge.</p>
         <p className="mt-2 text-sm text-muted-foreground">
           We'll only show a daily challenge after the backend returns one.
         </p>
         <button
           type="button"
           onClick={() => {
-            setLoading(true);
-            load(altOffset);
+            todayChallengeQuery.refetch();
           }}
           className="mt-5 rounded-full bg-emerald-400 px-5 py-2 text-sm font-semibold text-emerald-950"
         >
@@ -611,22 +612,25 @@ function StreakStrip({ days }: { days: boolean[] }) {
       <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
         Your challenge streak
       </p>
-      <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: "repeat(14, minmax(0, 1fr))" }}>
+      <div
+        className="mt-3 grid gap-2"
+        style={{ gridTemplateColumns: `repeat(${STREAK_WINDOW_DAYS}, minmax(0, 1fr))` }}
+      >
         {days.map((done, i) => {
-          const isToday = i === 13;
+          const isToday = i === TODAY_STREAK_INDEX;
           return (
             <motion.span
               key={i}
               initial={{ scale: 0 }}
               animate={{ scale: 1 }}
               transition={{ delay: i * 0.03, type: "spring", stiffness: 400, damping: 22 }}
-              title={isToday ? "Today" : done ? "Completed" : "Missed"}
+              title={done ? "Completed" : isToday ? "Today" : "Missed"}
               className={[
                 "mx-auto h-6 w-6 rounded-full",
-                isToday
-                  ? "bg-amber-300 shadow-[0_0_12px_rgba(252,211,77,0.7)]"
-                  : done
-                    ? "bg-emerald-400"
+                done
+                  ? "bg-emerald-400"
+                  : isToday
+                    ? "bg-amber-300 shadow-[0_0_12px_rgba(252,211,77,0.7)]"
                     : "border border-white/15 bg-white/5",
               ].join(" ")}
             />

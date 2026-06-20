@@ -16,7 +16,9 @@ function cleanParams(params?: QueryParams) {
 function invalidateCore(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["dashboard"] });
   qc.invalidateQueries({ queryKey: ["challenge-today"] });
+  qc.invalidateQueries({ queryKey: ["challenge-history"] });
   qc.invalidateQueries({ queryKey: ["streaks"] });
+  qc.invalidateQueries({ queryKey: ["level"] });
   qc.invalidateQueries({ queryKey: ["impact"] });
   qc.invalidateQueries({ queryKey: ["profile"] });
 }
@@ -124,10 +126,10 @@ export const useComparison = () =>
  * @returns Returns the React Query result or mutation object for the API operation.
  * @throws Surfaces request failures through React Query error state.
  */
-export const useTodayChallenge = () =>
+export const useTodayChallenge = (params?: QueryParams) =>
   useAuthedQuery({
-    queryKey: ["challenge-today"],
-    queryFn: () => api.get("/challenges/today").then((r) => r.data),
+    queryKey: ["challenge-today", cleanParams(params)],
+    queryFn: () => api.get("/challenges/today", { params: cleanParams(params) }).then((r) => r.data),
     staleTime: 30_000,
     refetchOnWindowFocus: false,
   });
