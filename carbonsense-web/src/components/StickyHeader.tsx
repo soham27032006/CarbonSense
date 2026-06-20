@@ -216,7 +216,9 @@ export function StickyHeader({ avatarName, streak, left, center, right }: Sticky
           {typeof effectiveStreak === "number" && (
             <StreakChip streak={effectiveStreak} />
           )}
-          {center}
+          <div className="flex min-w-0 flex-1 items-center justify-center truncate">
+            {center}
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {right}

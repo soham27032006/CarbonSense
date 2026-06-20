@@ -590,6 +590,15 @@ function TopTransactions({ transactions, unitSystem }: { transactions: Transacti
 }
 
 // ---------- section 6: comparison ----------
+// Labels on the comparison bar share two vertical slots (above / below the bar)
+// to stay legible when markers land close together horizontally. The gap below
+// is the minimum horizontal distance (as a percentage of the bar's 0-100% range)
+// at which two labels can sit on the same side without overlapping. The edge
+// threshold is the screen-edge margin below which a label flips its anchor to
+// stay on-screen.
+const MIN_LABEL_GAP_PERCENT = 12;
+const EDGE_ANCHOR_THRESHOLD_PERCENT = 8;
+
 function ComparisonCard({
   compare,
   unitSystem,
@@ -610,8 +619,19 @@ function ComparisonCard({
   const userPercent = (userVal / maxVal) * 100;
   const parisPercent = (parisVal / maxVal) * 100;
   const nationalPercent = (nationalVal / maxVal) * 100;
-  const tooClose = Math.abs(userPercent - nationalPercent) < 15;
-  const userAboveParis = userPercent - parisPercent < 15 && userPercent - parisPercent > -15;
+
+  // Default layout: Paris above, National below, User above. Detect collisions
+  // and flip whichever label would overlap with the user on its current side.
+  const userCollidesWithParisAbove =
+    Math.abs(userPercent - parisPercent) < MIN_LABEL_GAP_PERCENT;
+  const userCollidesWithNationalBelow =
+    Math.abs(userPercent - nationalPercent) < MIN_LABEL_GAP_PERCENT;
+
+  const userAbove = !userCollidesWithParisAbove;
+  const flipNationalToAbove =
+    !userAbove && userCollidesWithNationalBelow;
+  const flipParisToBelow =
+    userAbove && userCollidesWithParisAbove;
 
   let userTone: "green" | "yellow" | "red";
   if (userVal <= parisVal) userTone = "green";
@@ -625,7 +645,7 @@ function ComparisonCard({
         ? "#fbbf24"
         : "#f87171";
 
-  const userLabelTop = tooClose || userAboveParis ? "-30px" : "28px";
+  const userLabelTop = userAbove ? "-30px" : "28px";
 
   return (
     <section className="mt-5 rounded-3xl border border-white/10 bg-gradient-to-br from-emerald-500/12 via-teal-500/8 to-sky-500/12 px-3 py-5 sm:px-5">
@@ -649,8 +669,14 @@ function ComparisonCard({
             left={pos(parisVal)}
             color="#5eead4"
             label={`Paris ${formatCO2(parisVal, unitSystem)}`}
-            up
-            anchor={parisPercent < 8 ? "left" : parisPercent > 92 ? "right" : "center"}
+            up={!flipParisToBelow}
+            anchor={
+              parisPercent < EDGE_ANCHOR_THRESHOLD_PERCENT
+                ? "left"
+                : parisPercent > 100 - EDGE_ANCHOR_THRESHOLD_PERCENT
+                  ? "right"
+                  : "center"
+            }
           />
 
           {/* national avg marker */}
@@ -658,7 +684,14 @@ function ComparisonCard({
             left={pos(nationalVal)}
             color="#fb7185"
             label={`${countryLabel} avg ${formatCO2(nationalVal, unitSystem)}`}
-            anchor={nationalPercent < 8 ? "left" : nationalPercent > 92 ? "right" : "center"}
+            up={flipNationalToAbove}
+            anchor={
+              nationalPercent < EDGE_ANCHOR_THRESHOLD_PERCENT
+                ? "left"
+                : nationalPercent > 100 - EDGE_ANCHOR_THRESHOLD_PERCENT
+                  ? "right"
+                  : "center"
+            }
           />
 
           {/* user marker */}
