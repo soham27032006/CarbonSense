@@ -9,22 +9,33 @@ type RequestSchemas = {
 
 /**
  * Validates selected request containers before controller business logic runs.
- * @returns Express middleware that assigns parsed values back onto the request.
- * @throws Forwards Zod validation failures to the shared error handler.
+ *
+ * Calls each provided schema's {@link ZodTypeAny.parse} for its validation side-effect only;
+ * the parsed value is intentionally discarded. Express 5 exposes `req.query`, `req.params`,
+ * and `req.body` as read-only getters / body-parsed objects that must not be reassigned,
+ * so the middleware must not write parsed values back onto the request. Every controller
+ * in this codebase re-parses its own copy of the schema against `req.query`, `req.params`,
+ * or `req.body` directly, so the request never needs to carry pre-coerced values.
+ *
+ * Zod failures are forwarded to the shared error handler unchanged, so the response
+ * remains 400 with code `VALIDATION_ERROR`.
+ *
+ * @returns Express middleware that validates and forwards errors without mutating the request.
+ * @throws Forwards Zod validation failures to the shared error handler via `next(error)`.
  */
 export function validateRequest(schemas: RequestSchemas) {
   return (req: Request, _res: Response, next: NextFunction): void => {
     try {
       if (schemas.body) {
-        req.body = schemas.body.parse(req.body);
+        schemas.body.parse(req.body);
       }
 
       if (schemas.query) {
-        req.query = schemas.query.parse(req.query) as Request["query"];
+        schemas.query.parse(req.query);
       }
 
       if (schemas.params) {
-        req.params = schemas.params.parse(req.params) as Request["params"];
+        schemas.params.parse(req.params);
       }
 
       next();
