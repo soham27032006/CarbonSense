@@ -6,6 +6,10 @@ import { supabaseAdmin } from "../config/supabase";
 import type { CarbonCategory, CopilotConversation, CopilotMessage } from "../types";
 import { getEquivalencies } from "../utils/equivalencies";
 import { structuredCopilotReply } from "./ai.service";
+import {
+  GEMINI_BUSY_MESSAGE,
+  isGeminiRateLimitError
+} from "./gemini-retry";
 
 type UserContext = {
   name: string;
@@ -124,7 +128,11 @@ async function getAssistantResponse(
     const suggestions = parsed.success ? parsed.data.suggestions : fallbackSuggestions;
 
     return { response, suggestions };
-  } catch {
+  } catch (error) {
+    if (isGeminiRateLimitError(error)) {
+      return { response: GEMINI_BUSY_MESSAGE, suggestions: fallbackSuggestions };
+    }
+
     return { response: fallbackResponse, suggestions: fallbackSuggestions };
   }
 }

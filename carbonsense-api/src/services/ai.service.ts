@@ -4,55 +4,17 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { env } from "../config/env";
 import { AI_REQUEST_TIMEOUT_MS } from "../config/timeouts";
+import { withGeminiRetry } from "./gemini-retry";
 
 const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel(
   { model: "gemini-2.5-flash" },
   { timeout: AI_REQUEST_TIMEOUT_MS }
 );
-const TRANSIENT_AI_ERROR_PATTERNS = [
-  "503 service unavailable",
-  "429",
-  "resource exhausted",
-  "rate limit",
-  "quota",
-  "high demand",
-  "try again later",
-  "temporarily unavailable"
-] as const;
-
 type ChatHistoryMessage = {
   role: "user" | "assistant";
   content: string;
 };
-
-function isTransientAiError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
-  return TRANSIENT_AI_ERROR_PATTERNS.some((pattern) => message.includes(pattern));
-}
-
-async function sleep(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function withAiRetry<T>(work: () => Promise<T>): Promise<T> {
-  const delays = [350, 900];
-
-  for (let attempt = 0; attempt <= delays.length; attempt += 1) {
-    try {
-      return await work();
-    } catch (error) {
-      const shouldRetry = attempt < delays.length && isTransientAiError(error);
-      if (!shouldRetry) {
-        throw error;
-      }
-
-      await sleep(delays[attempt]);
-    }
-  }
-
-  throw new Error("AI request failed after retry");
-}
 
 /**
  * Runs the chatWithAI service workflow for CarbonSense domain data.
@@ -64,7 +26,7 @@ export async function chatWithAI(
   userMessage: string,
   history: ChatHistoryMessage[] = []
 ): Promise<string> {
-  return withAiRetry(async () => {
+  return withGeminiRetry(async () => {
     const chat = model.startChat({
       history: history.map((msg) => ({
         role: msg.role === "assistant" ? "model" : "user",
@@ -97,7 +59,7 @@ export async function classifyCarbon(
 Merchant: ${merchantName}, Category: ${category}, Amount: $${amount}
 Return ONLY valid JSON: {"carbon_category":"food|transport|home|shopping|travel|other","emission_factor_per_dollar":number,"reasoning":"string"}`;
 
-  const result = await withAiRetry(() => model.generateContent(prompt));
+  const result = await withGeminiRetry(() => model.generateContent(prompt));
   return JSON.parse(extractJson(result.response.text()));
 }
 
@@ -130,7 +92,7 @@ ${items
     )
     .join("\n")}`;
 
-  const result = await withAiRetry(() => model.generateContent(prompt));
+  const result = await withGeminiRetry(() => model.generateContent(prompt));
   const parsed = JSON.parse(extractJson(result.response.text())) as unknown;
 
   return Array.isArray(parsed) ? (parsed as Array<{
@@ -153,7 +115,7 @@ export async function structuredCopilotReply(
   userMessage: string,
   history: ChatHistoryMessage[] = []
 ): Promise<unknown> {
-  return withAiRetry(async () => {
+  return withGeminiRetry(async () => {
     const chat = model.startChat({
       history: history.map((msg) => ({
         role: msg.role === "assistant" ? "model" : "user",
