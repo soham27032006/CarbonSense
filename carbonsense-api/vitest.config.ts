@@ -8,6 +8,10 @@ export default defineConfig({
     setupFiles: ["tests/setup.ts"],
     clearMocks: true,
     restoreMocks: true,
-    fileParallelism: false
+    fileParallelism: false,
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "html"]
+    }
   }
 });

@@ -19,6 +19,9 @@ dist-ssr/
 .tanstack/
 .nitro/
 
+# Test coverage report artifacts
+coverage/
+
 # Environment files
 .env
 .env.local
