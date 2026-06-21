@@ -2,6 +2,10 @@
 
 > **CarbonSense turns climate action into a Duolingo-style daily habit by auto-tracking your carbon footprint from bank transactions, then serving one-tap daily challenges that actually reduce it — closing the gap between *knowing* your emissions and *lowering* them.**
 
+## Chosen Vertical
+
+**Hack2Skill Prompt Wars — "Duolingo for Climate Action."** CarbonSense targets the *climate-action habit-formation* vertical: everyday consumers who know climate change matters but lack a feedback loop that turns intent into measurable daily action. The product treats sustainability as a personal-habit problem (auto-tracked footprint → one daily challenge → streak → social leaderboard), personalized through the onboarding quiz's motivation, diet, and frequency questions (`routes/onboarding.tsx`), rather than as a policy, enterprise-carbon-accounting, or offset-marketplace problem.
+
 ---
 
 ## Problem Statement Alignment

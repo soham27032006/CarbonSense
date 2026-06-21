@@ -41,6 +41,8 @@ coverage/
 *.njsproj
 *.sln
 *.sw?
+*.bak
+*.bak.utf8
 
 # Windows device-name artifacts accidentally created by shell redirects
 nul
