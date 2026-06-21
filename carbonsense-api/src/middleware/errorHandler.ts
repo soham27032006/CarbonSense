@@ -16,6 +16,11 @@ type ErrorResponse = {
   };
 };
 
+type ErrorEnvelope = {
+  statusCode: number;
+  response: ErrorResponse;
+};
+
 /**
  * Typed operational error. Controllers and services throw this to signal
  * expected failure modes with a specific HTTP status code and machine-readable
@@ -41,6 +46,52 @@ export class AppError extends Error {
 }
 
 /**
+ * Builds the standard JSON error response envelope for any status/code/message.
+ * @returns Status and response payload consumed by the Express error handler.
+ */
+function buildErrorEnvelope(statusCode: number, code: string, message: string): ErrorEnvelope {
+  return {
+    statusCode,
+    response: {
+      success: false,
+      error: { code, message }
+    }
+  };
+}
+
+/**
+ * Logs validation, operational, and unexpected errors without leaking stacks in production.
+ */
+function logError(error: unknown, code: string, timestamp: string): void {
+  if (error instanceof ZodError) {
+    console.error(`[${timestamp}] Validation error`, error.flatten());
+    return;
+  }
+
+  console.error(`[${timestamp}] ${code}`, {
+    message: error instanceof Error ? error.message : String(error),
+    stack: env.NODE_ENV === "production" ? undefined : error instanceof Error ? error.stack : undefined,
+    isOperational: error instanceof AppError ? error.isOperational : false
+  });
+}
+
+/**
+ * Resolves any thrown value into the public error response contract.
+ * @returns Status and response payload matching the existing API shape.
+ */
+function getErrorEnvelope(error: unknown): ErrorEnvelope {
+  if (error instanceof ZodError) {
+    return buildErrorEnvelope(400, "VALIDATION_ERROR", "Invalid request payload");
+  }
+
+  return buildErrorEnvelope(
+    error instanceof AppError ? error.statusCode : 500,
+    error instanceof AppError ? error.code : "INTERNAL_SERVER_ERROR",
+    error instanceof AppError ? error.message : "An unexpected error occurred"
+  );
+}
+
+/**
  * Express error-handling middleware. Transforms every error into the standard
  * `{ success: false, error: { code, message } }` JSON envelope. Zod errors
  * become 400 VALIDATION_ERROR; AppErrors use their own statusCode/code;
@@ -48,40 +99,9 @@ export class AppError extends Error {
  */
 export const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
   const timestamp = new Date().toISOString();
+  const { statusCode, response } = getErrorEnvelope(error);
 
-  if (error instanceof ZodError) {
-    console.error(`[${timestamp}] Validation error`, error.flatten());
-
-    const response: ErrorResponse = {
-      success: false,
-      error: {
-        code: "VALIDATION_ERROR",
-        message: "Invalid request payload"
-      }
-    };
-
-    res.status(400).json(response);
-    return;
-  }
-
-  const statusCode = error instanceof AppError ? error.statusCode : 500;
-  const code = error instanceof AppError ? error.code : "INTERNAL_SERVER_ERROR";
-  const message =
-    error instanceof AppError ? error.message : "An unexpected error occurred";
-
-  console.error(`[${timestamp}] ${code}`, {
-    message: error instanceof Error ? error.message : String(error),
-    stack: env.NODE_ENV === "production" ? undefined : error instanceof Error ? error.stack : undefined,
-    isOperational: error instanceof AppError ? error.isOperational : false
-  });
-
-  const response: ErrorResponse = {
-    success: false,
-    error: {
-      code,
-      message
-    }
-  };
+  logError(error, response.error.code, timestamp);
 
   res.status(statusCode).json(response);
 };
