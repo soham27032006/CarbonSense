@@ -500,6 +500,13 @@ function CTAButton({
 }
 
 // ---------- quick stats ----------
+// Stat-card destinations. Streak and XP both surface in detail on the
+// Profile page (StatsRow), so they deep-link there instead of to routes
+// that were never built (/streak, /achievements both 404'd).
+const STREAK_CARD_LINK = "/profile";
+const WEEKLY_CARD_LINK = "/dashboard";
+const XP_CARD_LINK = "/profile";
+
 function QuickStats({ dashboard, unitSystem }: { dashboard: Dashboard; unitSystem: UnitSystem }) {
   const weekDelta = dashboard.this_week.vs_last_week_percent;
   const weekDown = weekDelta < 0;
@@ -508,7 +515,7 @@ function QuickStats({ dashboard, unitSystem }: { dashboard: Dashboard; unitSyste
   return (
     <section className="card-grid mt-5">
       <StatCard
-        to="/streak"
+        to={STREAK_CARD_LINK}
         accent="from-amber-300 to-orange-400"
         icon={<Flame className="h-4 w-4" />}
         label="Streak"
@@ -520,7 +527,7 @@ function QuickStats({ dashboard, unitSystem }: { dashboard: Dashboard; unitSyste
         sub={`Best ${dashboard.streak.max} ${pluralUnit(dashboard.streak.max, "day")}`}
       />
       <StatCard
-        to="/dashboard"
+        to={WEEKLY_CARD_LINK}
         accent="from-sky-300 to-blue-500"
         icon={<TrendingUp className="h-4 w-4" />}
         label="This week"
@@ -550,7 +557,7 @@ function QuickStats({ dashboard, unitSystem }: { dashboard: Dashboard; unitSyste
         }
       />
       <StatCard
-        to="/achievements"
+        to={XP_CARD_LINK}
         accent="from-fuchsia-300 to-pink-500"
         icon={<Star className="h-4 w-4" />}
         label="XP"
